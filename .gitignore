@@ -1,0 +1,32 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+artifacts/
+TestResults/
+coverage/
+*.coverage
+*.trx
+
+## Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+## Secrets / entornos
+appsettings.*.Local.json
+.env
+.env.*
+!.env.example
+
+## Evidencias y datos generados en runtime
+storage/evidence/
+storage/reports/
+logs/
+
+## SO
+Thumbs.db
+.DS_Store

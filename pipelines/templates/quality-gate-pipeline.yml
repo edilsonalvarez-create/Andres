@@ -1,0 +1,113 @@
+# ============================================================================
+# QA Guardian — Plantilla de pipeline "Quality Gate" para proyectos cliente.
+# Copie este workflow al repositorio del proyecto que desea proteger.
+#
+# Flujo: Build → Unit Test → Playwright → API Test → Security → Performance
+#        → Deploy Staging → Smoke Test → Producción
+#
+# QA Guardian decide automáticamente si el despliegue continúa: cada etapa de
+# pruebas dispara una ejecución vía API y espera el resultado del quality gate.
+# Secrets requeridos: QAGUARDIAN_URL, QAGUARDIAN_TOKEN, QAGUARDIAN_PROJECT_ID
+# ============================================================================
+name: Quality Gate — QA Guardian
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  QAG: ${{ secrets.QAGUARDIAN_URL }}
+  QAG_PROJECT: ${{ secrets.QAGUARDIAN_PROJECT_ID }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compilar la aplicación
+        run: echo "Reemplace con el build real del proyecto (dotnet build / npm run build)"
+
+  unit-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pruebas unitarias
+        run: echo "Reemplace con las pruebas unitarias del proyecto (dotnet test / npm test)"
+
+  qa-guardian-gate:
+    name: "QA Guardian: funcional + API + seguridad + rendimiento"
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        # 1=Funcional 3=API 4=Rendimiento 5=Seguridad (se ejecutan en paralelo)
+        runType: [1, 3, 5, 4]
+    steps:
+      - name: Disparar ejecución en QA Guardian
+        id: trigger
+        run: |
+          RUN_ID=$(curl -fsS -X POST "$QAG/api/v1/testruns" \
+            -H "Authorization: Bearer ${{ secrets.QAGUARDIAN_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"projectId\":\"$QAG_PROJECT\",\"runType\":${{ matrix.runType }},\"environment\":2,\"commitSha\":\"${{ github.sha }}\",\"pullRequestNumber\":${{ github.event.pull_request.number || 'null' }}}" \
+            | jq -r '.id')
+          echo "runId=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Esperar veredicto del quality gate
+        run: |
+          for i in $(seq 1 60); do
+            RUN=$(curl -fsS "$QAG/api/v1/testruns/${{ steps.trigger.outputs.runId }}" \
+              -H "Authorization: Bearer ${{ secrets.QAGUARDIAN_TOKEN }}")
+            STATUS=$(echo "$RUN" | jq -r '.run.status')
+            if [ "$STATUS" = "3" ]; then
+              APPROVED=$(echo "$RUN" | jq -r '.run.deploymentApproved')
+              GATE=$(echo "$RUN" | jq -r '.run.gateStatus')
+              echo "Quality Gate: $GATE (aprobado: $APPROVED)"
+              [ "$APPROVED" != "false" ] && exit 0 || { echo "::error::Despliegue bloqueado por QA Guardian"; exit 1; }
+            elif [ "$STATUS" = "4" ] || [ "$STATUS" = "5" ]; then
+              echo "::error::La ejecución falló o fue cancelada"; exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::Timeout esperando a QA Guardian"; exit 1
+
+  deploy-staging:
+    needs: qa-guardian-gate
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Desplegar a Staging
+        run: echo "Reemplace con el despliegue real a staging"
+
+  smoke-tests:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke tests en Staging vía QA Guardian
+        run: |
+          RUN_ID=$(curl -fsS -X POST "$QAG/api/v1/testruns" \
+            -H "Authorization: Bearer ${{ secrets.QAGUARDIAN_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"projectId\":\"$QAG_PROJECT\",\"runType\":8,\"environment\":3,\"commitSha\":\"${{ github.sha }}\"}" \
+            | jq -r '.id')
+          for i in $(seq 1 30); do
+            RUN=$(curl -fsS "$QAG/api/v1/testruns/$RUN_ID" \
+              -H "Authorization: Bearer ${{ secrets.QAGUARDIAN_TOKEN }}")
+            STATUS=$(echo "$RUN" | jq -r '.run.status')
+            [ "$STATUS" = "3" ] && exit $([ "$(echo "$RUN" | jq -r '.run.failed')" = "0" ] && echo 0 || echo 1)
+            { [ "$STATUS" = "4" ] || [ "$STATUS" = "5" ]; } && exit 1
+            sleep 20
+          done
+          exit 1
+
+  deploy-production:
+    needs: smoke-tests
+    runs-on: ubuntu-latest
+    environment: production   # requiere aprobación manual configurada en GitHub
+    steps:
+      - name: Desplegar a Producción
+        run: echo "Reemplace con el despliegue real a producción"

@@ -1,0 +1,57 @@
+# ============================================================================
+# QA Guardian — Pipeline de Azure DevOps (build, pruebas e imágenes Docker)
+# ============================================================================
+trigger:
+  branches:
+    include: [main]
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  buildConfiguration: Release
+
+stages:
+  - stage: Build
+    displayName: Compilación y pruebas
+    jobs:
+      - job: Backend
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: sdk
+              version: 9.0.x
+          - script: dotnet restore QAGuardian.sln
+            displayName: Restaurar
+          - script: dotnet build QAGuardian.sln --no-restore -c $(buildConfiguration)
+            displayName: Compilar
+          - script: dotnet test QAGuardian.sln --no-build -c $(buildConfiguration) --logger trx
+            displayName: Pruebas
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: VSTest
+              testResultsFiles: "**/*.trx"
+
+      - job: Frontend
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: 22.x
+          - script: |
+              cd frontend
+              npm ci
+              npm run build
+            displayName: Build frontend
+
+  - stage: Docker
+    displayName: Imágenes Docker
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: Images
+        steps:
+          - script: docker build -f src/QAGuardian.API/Dockerfile -t qaguardian-api:$(Build.SourceVersion) .
+            displayName: Imagen API
+          - script: docker build -t qaguardian-frontend:$(Build.SourceVersion) ./frontend
+            displayName: Imagen frontend

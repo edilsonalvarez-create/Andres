@@ -20,10 +20,10 @@ Swagger UI en `/swagger` (ambiente Development). Versionado por segmento de URL
 |---|---|---|
 | `/projects` | CRUD + `POST {id}/modules` | Lectura: autenticado · Escritura: Admin/LiderTecnico/QA |
 | `/testcases` | CRUD + `POST {id}/automate` (vincula script Playwright/Postman/JMeter/ZAP) | Ídem |
-| `/testruns` | `GET`, `POST` (encola ejecución), `POST {id}/cancel`, `GET {id}/report?format=Pdf|Excel|Word|Html|Json|Csv`, `GET evidence?path=` | Ejecución: Admin/QA/DevOps/LiderTecnico |
+| `/testruns` | `GET`, `POST` (encola ejecución), `POST {id}/cancel`, `GET {id}/report?format=Pdf|Excel|Word|Html|Json|Csv|Xml`, `GET evidence?path=` | Ejecución: Admin/QA/DevOps/LiderTecnico |
 | `/defects` | `GET`, `POST`, `POST {id}/status` (workflow Nuevo→…→Cerrado) | Admin/QA/Desarrollador/LiderTecnico |
 | `/qualitygates` | `GET`, `POST`, `POST assign` | Escritura: gestión de proyectos |
-| `/dashboard` | `GET ?projectId=` KPIs, tendencia, errores por módulo | Autenticado |
+| `/dashboard` | `GET ?projectId=` KPIs, tendencia, errores por módulo, disponibilidad · `GET report?projectId=&format=Pdf\|Excel` | Autenticado |
 | `/integrations` | `POST` upsert config · `GET sonarqube/{projectId}` · `GET github/{projectId}/pulls` · `POST github/{projectId}/pulls/{n}/analyze` · `POST database-validation` · `POST postman/import` · `GET github/{projectId}/pipeline?download=` | Ver tabla de roles |
 | `/admin/users`, `/admin/notification-channels` | Gestión de usuarios y canales | Administrador / gestión |
 
@@ -136,11 +136,14 @@ Core** (`__EFMigrationsHistory`, si el ambiente lo usa).
 
 ## 4. Agente IA
 
-- `ClaudeAiAnalysisService` (diagnóstico de fallos): prompt con error/stacktrace/logs →
+- `ClaudeAiAnalysisService` (diagnóstico de fallos): prompt con error/excepción, stacktrace,
+  **extracto del log-evidencia** (leído del archivo adjunto), **consulta SQL** (extraída del
+  error/stacktrace/métricas cuando es detectable) y ruta del screenshot →
   JSON estructurado `{diagnosis, probableCause, criticality, recommendation,
   suggestedPriority, estimatedHours, suggestedOwnerRole}` validado por
   `output_config.format` (json_schema). Los fallos con criticidad Alta/Crítica registran
-  defecto automáticamente con el diagnóstico embebido.
+  defecto automáticamente con el diagnóstico embebido. (El análisis de video no está
+  soportado: el modelo no procesa video; el video se conserva como evidencia.)
 - `ClaudeTestGenerationService` (agente de PR): archivos modificados → casos de prueba
   sugeridos (Playwright/Postman) que se guardan como borradores `TC-AI-xxxx`.
 - Ambos degradan a heurísticas basadas en reglas si no hay API key o el LLM falla,

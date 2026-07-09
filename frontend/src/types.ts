@@ -112,6 +112,7 @@ export interface DashboardStats {
   criticalDefectsOpen: number;
   vulnerabilitiesHighOrCritical: number;
   qualityScore: number;
+  availabilityPercent: number;
   errorsByModule: { moduleName: string; failedCount: number }[];
   trend: { date: string; passed: number; failed: number; passRate: number }[];
 }

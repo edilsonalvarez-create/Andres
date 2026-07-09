@@ -305,8 +305,10 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
         {
             try
             {
+                var logsExcerpt = await ReadLogEvidenceAsync(failure, ct);
+                var sqlQuery = ExtractSqlQuery(failure);
                 var diagnosis = await _ai.AnalyzeFailureAsync(new FailureContext(
-                    failure.Name, failure.ErrorMessage, failure.StackTrace, null, null,
+                    failure.Name, failure.ErrorMessage, failure.StackTrace, logsExcerpt, sqlQuery,
                     failure.Evidences.FirstOrDefault(e => e.Type == EvidenceType.Screenshot)?.FilePath,
                     run.RunType, project.Name), ct);
 
@@ -339,6 +341,39 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
                 _logger.LogWarning(ex, "Análisis IA falló para el resultado {ResultId}", failure.Id);
             }
         }
+    }
+
+    /// <summary>Lee un extracto del archivo de log adjunto al resultado (para el contexto de la IA).</summary>
+    private async Task<string?> ReadLogEvidenceAsync(TestResult failure, CancellationToken ct)
+    {
+        var log = failure.Evidences.FirstOrDefault(e => e.Type == EvidenceType.Log);
+        if (log is null) return null;
+        try
+        {
+            await using var stream = await _storage.OpenReadAsync(log.FilePath, ct);
+            using var reader = new StreamReader(stream);
+            var content = await reader.ReadToEndAsync(ct);
+            return content.Length <= 4000 ? content : content[..4000] + "…";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "No se pudo leer el log-evidencia {Path}", log.FilePath);
+            return null;
+        }
+    }
+
+    /// <summary>Extrae una consulta SQL del error/stacktrace si es detectable (para el contexto de la IA).</summary>
+    private static string? ExtractSqlQuery(TestResult failure)
+    {
+        var haystack = $"{failure.ErrorMessage}\n{failure.StackTrace}\n{failure.MetricsJson}";
+        var match = System.Text.RegularExpressions.Regex.Match(
+            haystack,
+            @"\b(SELECT|INSERT|UPDATE|DELETE|MERGE|EXEC)\b.+?(?=(\r?\n\s*\r?\n)|$)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (!match.Success) return null;
+        var sql = match.Value.Trim();
+        return sql.Length <= 2000 ? sql : sql[..2000] + "…";
     }
 
     private async Task PublishGitHubCheckAsync(TestRun run, Project project,

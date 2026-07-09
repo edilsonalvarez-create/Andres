@@ -40,11 +40,15 @@ public interface IEvidenceStorage
 }
 
 /// <summary>Formatos de reporte soportados.</summary>
-public enum ReportFormat { Pdf, Excel, Html, Json, Csv, Word }
+public enum ReportFormat { Pdf, Excel, Html, Json, Csv, Word, Xml }
 
-/// <summary>Puerto: generación de reportes de ejecución en múltiples formatos.</summary>
+/// <summary>Puerto: generación de reportes de ejecución y de dashboard en múltiples formatos.</summary>
 public interface IReportGenerator
 {
     Task<(byte[] Content, string ContentType, string FileName)> GenerateRunReportAsync(
         Guid testRunId, ReportFormat format, CancellationToken ct = default);
+
+    /// <summary>Genera un reporte del dashboard ejecutivo (PDF o Excel).</summary>
+    (byte[] Content, string ContentType, string FileName) GenerateDashboardReport(
+        Features.Dashboard.DashboardDto stats, string title, ReportFormat format);
 }

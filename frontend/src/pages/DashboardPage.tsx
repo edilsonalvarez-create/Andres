@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Card, CardContent, CircularProgress, Grid2 as Grid, Typography } from "@mui/material";
+import {
+  Alert, Box, Button, Card, CardContent, CircularProgress, Grid2 as Grid, Typography,
+} from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 import {
   Bar, BarChart, CartesianGrid, Legend, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -46,14 +49,40 @@ export default function DashboardPage() {
     { label: "Defectos abiertos", value: stats.openDefects },
     { label: "Defectos críticos", value: stats.criticalDefectsOpen, accent: stats.criticalDefectsOpen > 0 ? "#c62828" : "#2e7d32" },
     { label: "Vulnerabilidades altas/críticas", value: stats.vulnerabilitiesHighOrCritical, accent: stats.vulnerabilitiesHighOrCritical > 0 ? "#c62828" : "#2e7d32" },
+    { label: "Disponibilidad", value: `${stats.availabilityPercent}%`, accent: stats.availabilityPercent >= 95 ? "#2e7d32" : "#c62828" },
     { label: "Índice de calidad", value: stats.qualityScore },
   ];
 
+  const exportReport = (format: string) => {
+    void api
+      .get("/dashboard/report", { params: { format }, responseType: "blob" })
+      .then((r) => {
+        const url = URL.createObjectURL(r.data as Blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `dashboard.${format.toLowerCase() === "excel" ? "xlsx" : "pdf"}`;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+  };
+
   return (
     <div className="flex flex-col gap-6">
-      <Typography variant="h5" fontWeight={700}>
-        Dashboard ejecutivo
-      </Typography>
+      <Box className="flex items-center justify-between">
+        <Typography variant="h5" fontWeight={700}>
+          Dashboard ejecutivo
+        </Typography>
+        <Box className="flex gap-2">
+          <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
+            onClick={() => exportReport("Pdf")}>
+            PDF
+          </Button>
+          <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
+            onClick={() => exportReport("Excel")}>
+            Excel
+          </Button>
+        </Box>
+      </Box>
 
       <Grid container spacing={2}>
         {kpis.map((kpi) => (

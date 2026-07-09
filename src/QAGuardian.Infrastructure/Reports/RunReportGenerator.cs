@@ -48,8 +48,38 @@ public class RunReportGenerator : IReportGenerator
             ReportFormat.Pdf => (GeneratePdf(run, projectName), "application/pdf", $"{baseName}.pdf"),
             ReportFormat.Word => (GenerateWord(run, projectName),
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"{baseName}.docx"),
+            ReportFormat.Xml => (GenerateXml(run, projectName), "application/xml", $"{baseName}.xml"),
             _ => throw new NotSupportedException($"Formato no soportado: {format}")
         };
+    }
+
+    private static byte[] GenerateXml(TestRun run, string projectName)
+    {
+        var doc = new System.Xml.Linq.XDocument(
+            new System.Xml.Linq.XElement("TestRun",
+                new System.Xml.Linq.XAttribute("id", run.Id),
+                new System.Xml.Linq.XElement("Project", projectName),
+                new System.Xml.Linq.XElement("Type", run.RunType),
+                new System.Xml.Linq.XElement("Environment", run.Environment),
+                new System.Xml.Linq.XElement("Status", run.Status),
+                new System.Xml.Linq.XElement("StartedAt", run.StartedAt),
+                new System.Xml.Linq.XElement("CompletedAt", run.CompletedAt),
+                new System.Xml.Linq.XElement("Total", run.TotalTests),
+                new System.Xml.Linq.XElement("Passed", run.Passed),
+                new System.Xml.Linq.XElement("Failed", run.Failed),
+                new System.Xml.Linq.XElement("Skipped", run.Skipped),
+                new System.Xml.Linq.XElement("PassRatePercent", run.PassRatePercent),
+                new System.Xml.Linq.XElement("QualityGate", run.GateEvaluation?.Status.ToString() ?? "N/A"),
+                new System.Xml.Linq.XElement("Results",
+                    run.Results.Select(r => new System.Xml.Linq.XElement("Result",
+                        new System.Xml.Linq.XAttribute("status", r.Status),
+                        new System.Xml.Linq.XElement("Name", r.Name),
+                        new System.Xml.Linq.XElement("DurationMs", r.DurationMs),
+                        r.ErrorMessage is null ? null : new System.Xml.Linq.XElement("Error", r.ErrorMessage))))));
+
+        using var stream = new MemoryStream();
+        doc.Save(stream);
+        return stream.ToArray();
     }
 
     private static byte[] GenerateJson(TestRun run, string projectName)
@@ -244,5 +274,129 @@ public class RunReportGenerator : IReportGenerator
             if (bold) runProps.AppendChild(new Bold());
             return new Paragraph(new Run(runProps, new Text(text)));
         }
+    }
+
+    // ─────────────────────────── Reporte de dashboard ───────────────────────────
+
+    public (byte[] Content, string ContentType, string FileName) GenerateDashboardReport(
+        QAGuardian.Application.Features.Dashboard.DashboardDto stats, string title, ReportFormat format)
+    {
+        var baseName = $"dashboard-{DateTime.UtcNow:yyyyMMdd-HHmm}";
+        return format switch
+        {
+            ReportFormat.Excel => (GenerateDashboardExcel(stats, title),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"{baseName}.xlsx"),
+            ReportFormat.Pdf => (GenerateDashboardPdf(stats, title), "application/pdf", $"{baseName}.pdf"),
+            _ => throw new NotSupportedException($"El dashboard solo se exporta en PDF o Excel (recibido: {format}).")
+        };
+    }
+
+    private static (string Label, object Value)[] DashboardKpis(
+        QAGuardian.Application.Features.Dashboard.DashboardDto s) =>
+    [
+        ("Proyectos activos", s.TotalProjects),
+        ("Casos de prueba", s.TotalTestCases),
+        ("Automatizados", s.AutomatedTestCases),
+        ("Cobertura de automatización (%)", s.AutomationCoveragePercent),
+        ("Ejecuciones (30 días)", s.RunsLast30Days),
+        ("Pruebas ejecutadas", s.TestsExecuted),
+        ("Exitosas", s.TestsPassed),
+        ("Fallidas", s.TestsFailed),
+        ("Pendientes", s.TestsPending),
+        ("% de éxito", s.PassRatePercent),
+        ("Tiempo promedio (s)", Math.Round(s.AvgRunDurationSeconds, 2)),
+        ("Defectos abiertos", s.OpenDefects),
+        ("Defectos críticos", s.CriticalDefectsOpen),
+        ("Vulnerabilidades altas/críticas", s.VulnerabilitiesHighOrCritical),
+        ("Disponibilidad (%)", s.AvailabilityPercent),
+        ("Índice de calidad", s.QualityScore)
+    ];
+
+    private static byte[] GenerateDashboardExcel(
+        QAGuardian.Application.Features.Dashboard.DashboardDto stats, string title)
+    {
+        using var workbook = new XLWorkbook();
+        var kpis = workbook.Worksheets.Add("KPIs");
+        kpis.Cell(1, 1).Value = title;
+        kpis.Cell(1, 1).Style.Font.SetBold().Font.FontSize = 14;
+        var row = 3;
+        foreach (var (label, value) in DashboardKpis(stats))
+        {
+            kpis.Cell(row, 1).Value = label;
+            kpis.Cell(row, 2).Value = value.ToString();
+            row++;
+        }
+        kpis.Columns().AdjustToContents();
+
+        var modules = workbook.Worksheets.Add("Errores por módulo");
+        modules.Cell(1, 1).Value = "Módulo";
+        modules.Cell(1, 2).Value = "Fallos";
+        modules.Row(1).Style.Font.SetBold();
+        var mrow = 2;
+        foreach (var m in stats.ErrorsByModule)
+        {
+            modules.Cell(mrow, 1).Value = m.ModuleName;
+            modules.Cell(mrow, 2).Value = m.FailedCount;
+            mrow++;
+        }
+        modules.Columns().AdjustToContents();
+
+        using var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        return stream.ToArray();
+    }
+
+    private static byte[] GenerateDashboardPdf(
+        QAGuardian.Application.Features.Dashboard.DashboardDto stats, string title)
+    {
+        var document = QuestPDF.Fluent.Document.Create(container =>
+        {
+            container.Page(page =>
+            {
+                page.Size(PageSizes.A4);
+                page.Margin(40);
+                page.Header().Text(title).FontSize(18).Bold().FontColor(Colors.Indigo.Darken3);
+                page.Content().Column(col =>
+                {
+                    col.Spacing(10);
+                    col.Item().Text("Indicadores ejecutivos").Bold().FontSize(13);
+                    col.Item().Table(table =>
+                    {
+                        table.ColumnsDefinition(columns =>
+                        {
+                            columns.RelativeColumn(3);
+                            columns.RelativeColumn(1);
+                        });
+                        foreach (var (label, value) in DashboardKpis(stats))
+                        {
+                            table.Cell().Padding(3).Text(label).FontSize(10);
+                            table.Cell().Padding(3).AlignRight().Text(value.ToString()!).FontSize(10).Bold();
+                        }
+                    });
+
+                    if (stats.ErrorsByModule.Count > 0)
+                    {
+                        col.Item().PaddingTop(10).Text("Errores por módulo").Bold().FontSize(13);
+                        col.Item().Table(table =>
+                        {
+                            table.ColumnsDefinition(columns => { columns.RelativeColumn(3); columns.RelativeColumn(1); });
+                            table.Header(header =>
+                            {
+                                header.Cell().Background(Colors.Indigo.Darken3).Padding(4).Text("Módulo").FontColor(Colors.White).Bold();
+                                header.Cell().Background(Colors.Indigo.Darken3).Padding(4).Text("Fallos").FontColor(Colors.White).Bold();
+                            });
+                            foreach (var m in stats.ErrorsByModule)
+                            {
+                                table.Cell().Padding(3).Text(m.ModuleName).FontSize(10);
+                                table.Cell().Padding(3).AlignRight().Text(m.FailedCount.ToString()).FontSize(10);
+                            }
+                        });
+                    }
+                });
+                page.Footer().AlignCenter()
+                    .Text($"Generado por QA Guardian — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC").FontSize(8);
+            });
+        });
+        return document.GeneratePdf();
     }
 }

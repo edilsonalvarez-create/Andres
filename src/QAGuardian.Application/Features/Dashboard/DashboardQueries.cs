@@ -25,6 +25,7 @@ public record DashboardDto(
     int CriticalDefectsOpen,
     int VulnerabilitiesHighOrCritical,
     decimal QualityScore,
+    decimal AvailabilityPercent,
     IReadOnlyList<ModuleErrorStat> ErrorsByModule,
     IReadOnlyList<TrendPoint> Trend);
 
@@ -107,13 +108,22 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
         var qualityScore = Math.Max(0, Math.Round(
             passRate - criticalOpen * 5 - vulns * 3, 2));
 
+        // Disponibilidad del pipeline: % de ejecuciones que finalizaron correctamente
+        // (Completed) frente al total lanzado (excluye fallidas y canceladas).
+        var terminalRunCount = recentRuns.Count(r => r.Status is RunStatus.Completed
+            or RunStatus.Failed or RunStatus.Cancelled);
+        var completedRunCount = recentRuns.Count(r => r.Status == RunStatus.Completed);
+        var availability = terminalRunCount == 0 ? 100m
+            : Math.Round(completedRunCount * 100m / terminalRunCount, 2);
+
         var errorsByModule = await ComputeErrorsByModuleAsync(withResults, pid, ct);
         var trend = ComputeTrend(withResults);
 
         var dto = new DashboardDto(totalProjects, totalTestCases, automated,
             totalTestCases == 0 ? 0 : Math.Round(automated * 100m / totalTestCases, 2),
             recentRuns.Count, executed, passed, failed, pending, passRate,
-            avgDuration, openDefects, criticalOpen, vulns, qualityScore, errorsByModule, trend);
+            avgDuration, openDefects, criticalOpen, vulns, qualityScore, availability,
+            errorsByModule, trend);
 
         await _cache.SetAsync(cacheKey, dto, CacheTtl, ct);
         return dto;

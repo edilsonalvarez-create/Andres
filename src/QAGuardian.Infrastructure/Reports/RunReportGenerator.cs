@@ -49,9 +49,37 @@ public class RunReportGenerator : IReportGenerator
             ReportFormat.Word => (GenerateWord(run, projectName),
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document", $"{baseName}.docx"),
             ReportFormat.Xml => (GenerateXml(run, projectName), "application/xml", $"{baseName}.xml"),
+            ReportFormat.PowerPoint => (GeneratePowerPoint(run, projectName),
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation", $"{baseName}.pptx"),
             _ => throw new NotSupportedException($"Formato no soportado: {format}")
         };
     }
+
+    private static byte[] GeneratePowerPoint(TestRun run, string projectName)
+    {
+        var resumen = new List<string>
+        {
+            $"Tipo: {run.RunType} · Ambiente: {run.Environment} · Estado: {run.Status}",
+            $"Total: {run.TotalTests} · Exitosas: {run.Passed} · Fallidas: {run.Failed} · Omitidas: {run.Skipped}",
+            $"Porcentaje de éxito: {run.PassRatePercent}%",
+            $"Quality Gate: {run.GateEvaluation?.Status.ToString() ?? "N/A"}"
+        };
+        var sections = new List<PptxSection> { new("Resumen ejecutivo", resumen) };
+
+        foreach (var chunk in run.Results.Chunk(12))
+            sections.Add(new PptxSection("Resultados", chunk
+                .Select(r => $"[{r.Status}] {r.Name} ({r.DurationMs} ms)" +
+                             (r.ErrorMessage is null ? "" : $" — {TruncateText(r.ErrorMessage, 90)}"))
+                .ToList()));
+
+        return PowerPointBuilder.Build(
+            $"QA Guardian — {projectName}",
+            $"Reporte de ejecución · {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC",
+            sections);
+    }
+
+    private static string TruncateText(string value, int max)
+        => value.Length <= max ? value : value[..max] + "…";
 
     private static byte[] GenerateXml(TestRun run, string projectName)
     {

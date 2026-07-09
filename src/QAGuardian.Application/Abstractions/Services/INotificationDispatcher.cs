@@ -40,7 +40,7 @@ public interface IEvidenceStorage
 }
 
 /// <summary>Formatos de reporte soportados.</summary>
-public enum ReportFormat { Pdf, Excel, Html, Json, Csv, Word, Xml }
+public enum ReportFormat { Pdf, Excel, Html, Json, Csv, Word, Xml, PowerPoint }
 
 /// <summary>Puerto: generación de reportes de ejecución y de dashboard en múltiples formatos.</summary>
 public interface IReportGenerator

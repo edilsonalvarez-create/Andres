@@ -20,7 +20,7 @@ Swagger UI en `/swagger` (ambiente Development). Versionado por segmento de URL
 |---|---|---|
 | `/projects` | CRUD + `POST {id}/modules` | Lectura: autenticado · Escritura: Admin/LiderTecnico/QA |
 | `/testcases` | CRUD + `POST {id}/automate` (vincula script Playwright/Postman/JMeter/ZAP) | Ídem |
-| `/testruns` | `GET`, `POST` (encola ejecución), `POST {id}/cancel`, `GET {id}/report?format=Pdf|Excel|Word|Html|Json|Csv|Xml`, `GET evidence?path=` | Ejecución: Admin/QA/DevOps/LiderTecnico |
+| `/testruns` | `GET`, `POST` (encola ejecución), `POST {id}/cancel`, `GET {id}/report?format=Pdf|Excel|Word|PowerPoint|Html|Json|Csv|Xml`, `GET evidence?path=` | Ejecución: Admin/QA/DevOps/LiderTecnico |
 | `/defects` | `GET`, `POST`, `POST {id}/status` (workflow Nuevo→…→Cerrado) | Admin/QA/Desarrollador/LiderTecnico |
 | `/qualitygates` | `GET`, `POST`, `POST assign` | Escritura: gestión de proyectos |
 | `/dashboard` | `GET ?projectId=&from=&to=` KPIs, tendencia, errores por módulo, **heatmap módulo×día**, disponibilidad · `GET report?projectId=&from=&to=&format=Pdf\|Excel` | Autenticado |
@@ -40,7 +40,8 @@ Hub: `/hubs/testruns` (JWT por query `access_token`). Métodos cliente→servido
 |---|---|
 | `ConnectionStrings:DefaultConnection` | SQL Server (o archivo SQLite si `Database:UseSqlite=true`) |
 | `ConnectionStrings:Redis` | Vacío = caché en memoria |
-| `Jwt:SigningKey/Issuer/Audience/AccessTokenMinutes/RefreshTokenDays` | Emisión y validación JWT |
+| `Jwt:SigningKey/Issuer/Audience/AccessTokenMinutes/RefreshTokenDays` | Emisión y validación JWT local |
+| `Oidc:Authority/Audience/RequireHttpsMetadata` | **OAuth2/OpenID Connect**: al configurar `Authority` (p. ej. `https://login.microsoftonline.com/{tenant}/v2.0` para Entra ID, o la URL de Keycloak/Google), los tokens del proveedor se validan por *discovery* en un segundo esquema. El esquema se elige por el emisor del token; el usuario debe estar **aprovisionado** en QA Guardian (mismo correo) y sus roles RBAC se toman de la base local |
 | `Security:EncryptionKey` | AES-256 para tokens de integraciones en reposo |
 | `Anthropic:ApiKey` | Agente IA (vacío = modo heurístico) |
 | `Smtp:*` | Correo saliente |

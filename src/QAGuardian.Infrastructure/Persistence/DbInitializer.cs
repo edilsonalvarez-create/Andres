@@ -22,7 +22,13 @@ public class DbInitializer
 
     public async Task InitializeAsync(string adminEmail, string adminPassword, CancellationToken ct = default)
     {
-        await _context.Database.EnsureCreatedAsync(ct);
+        // SQL Server usa migraciones EF Core (historial versionado en __EFMigrationsHistory);
+        // SQLite (desarrollo/pruebas) crea el esquema directo del modelo.
+        // Bases creadas por los scripts SQL del DBA: use Database:SkipInitialization=true.
+        if (_context.Database.IsSqlServer())
+            await _context.Database.MigrateAsync(ct);
+        else
+            await _context.Database.EnsureCreatedAsync(ct);
         await SeedRolesAsync(ct);
         await SeedAdminAsync(adminEmail, adminPassword, ct);
         await SeedDefaultQualityGateAsync(ct);

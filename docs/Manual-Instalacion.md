@@ -50,9 +50,14 @@ docker compose up -d
 
 ## 4. Instalación en producción
 
-1. **Base de datos**: ejecute en orden `database/01-schema.sql`, `02-indexes-constraints.sql`
-   y `03-seed.sql` (el `04-sample-data.sql` es solo para demos). Alternativamente deje que
-   la aplicación cree el esquema en el primer arranque.
+1. **Base de datos** — dos rutas (elija una):
+   - **Migraciones EF Core (recomendada)**: en el primer arranque contra SQL Server, la
+     aplicación aplica automáticamente las migraciones de `src/QAGuardian.Infrastructure/Migrations`
+     (historial versionado en `__EFMigrationsHistory`). Nuevas migraciones:
+     `dotnet dotnet-ef migrations add <Nombre> --project src/QAGuardian.Infrastructure --startup-project src/QAGuardian.API`.
+   - **Scripts del DBA**: ejecute en orden `database/01-schema.sql`, `02-indexes-constraints.sql`
+     y `03-seed.sql` (el `04` es demo) y configure `Database__SkipInitialization=true`
+     para que la aplicación no intente migrar sobre un esquema ya creado.
 2. **Secretos**: configure por variables de entorno (nunca en appsettings):
    - `ConnectionStrings__DefaultConnection`, `ConnectionStrings__Redis`
    - `Jwt__SigningKey` (aleatoria, mínimo 32 caracteres)

@@ -33,24 +33,83 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<IRunProgressNotifier, SignalRRunProgressNotifier>();
 
-// ── Autenticación JWT ────────────────────────────────────────────────
+// ── Autenticación: JWT local + OIDC externo (OAuth2/OpenID Connect) ─────
+// Con Oidc:Authority configurada, los tokens de un proveedor de identidad
+// conforme (Entra ID, Google, Keycloak…) se validan por discovery. El esquema
+// se selecciona por el emisor del token; el usuario debe existir en QA Guardian
+// (aprovisionado) y sus roles RBAC se toman de la base local.
 var jwtKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("Jwt:SigningKey es obligatoria.");
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+var localIssuer = builder.Configuration["Jwt:Issuer"] ?? "QAGuardian";
+var oidcAuthority = builder.Configuration["Oidc:Authority"];
+var oidcEnabled = !string.IsNullOrWhiteSpace(oidcAuthority);
+const string OidcScheme = "Oidc";
+const string MultiAuthScheme = "MultiAuth";
+
+// Extrae el token del encabezado Authorization o del query string (SignalR).
+static string? ExtractToken(HttpContext context)
+{
+    var header = context.Request.Headers.Authorization.ToString();
+    if (!string.IsNullOrEmpty(header)) return header;
+    return context.Request.Path.StartsWithSegments("/hubs")
+        ? context.Request.Query["access_token"].ToString()
+        : null;
+}
+
+var authBuilder = builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = MultiAuthScheme;
+    options.DefaultChallengeScheme = MultiAuthScheme;
+});
+
+authBuilder.AddPolicyScheme(MultiAuthScheme, "JWT local u OIDC externo", options =>
+{
+    options.ForwardDefaultSelector = context =>
+        oidcEnabled && QAGuardian.Infrastructure.Identity.OidcTokenInspector
+            .IsExternalToken(ExtractToken(context), localIssuer)
+            ? OidcScheme
+            : JwtBearerDefaults.AuthenticationScheme;
+});
+
+authBuilder.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
+        ValidateIssuer = true,
+        ValidIssuer = localIssuer,
+        ValidateAudience = true,
+        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "QAGuardian.Clients",
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromSeconds(30)
+    };
+    // Permite el token por query string para el hub de SignalR.
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken)
+                && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                context.Token = accessToken;
+            return Task.CompletedTask;
+        }
+    };
+});
+
+if (oidcEnabled)
+{
+    authBuilder.AddJwtBearer(OidcScheme, options =>
+    {
+        options.Authority = oidcAuthority;
+        options.Audience = builder.Configuration["Oidc:Audience"];
+        options.RequireHttpsMetadata = builder.Configuration.GetValue("Oidc:RequireHttpsMetadata", true);
         options.TokenValidationParameters = new TokenValidationParameters
         {
-            ValidateIssuer = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "QAGuardian",
-            ValidateAudience = true,
-            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "QAGuardian.Clients",
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromSeconds(30)
+            ValidateAudience = !string.IsNullOrEmpty(builder.Configuration["Oidc:Audience"]),
+            NameClaimType = "name"
         };
-        // Permite el token por query string para el hub de SignalR.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -60,9 +119,41 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
                     context.Token = accessToken;
                 return Task.CompletedTask;
+            },
+            // El proveedor externo autentica la identidad; los roles RBAC son locales.
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal;
+                var email = principal?.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                            ?? principal?.FindFirst("email")?.Value
+                            ?? principal?.FindFirst("preferred_username")?.Value;
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
+                {
+                    context.Fail("El token OIDC no contiene un correo electrónico.");
+                    return;
+                }
+
+                var users = context.HttpContext.RequestServices
+                    .GetRequiredService<QAGuardian.Application.Abstractions.Persistence.IUserRepository>();
+                var user = await users.GetByEmailAsync(email, context.HttpContext.RequestAborted);
+                if (user is null || !user.IsActive)
+                {
+                    context.Fail("El usuario no está aprovisionado en QA Guardian.");
+                    return;
+                }
+
+                var identity = (System.Security.Claims.ClaimsIdentity)principal!.Identity!;
+                identity.AddClaim(new System.Security.Claims.Claim(
+                    System.Security.Claims.ClaimTypes.NameIdentifier, user.Id.ToString()));
+                identity.AddClaim(new System.Security.Claims.Claim(
+                    System.Security.Claims.ClaimTypes.Email, user.Email));
+                foreach (var role in user.Roles)
+                    identity.AddClaim(new System.Security.Claims.Claim(
+                        System.Security.Claims.ClaimTypes.Role, role.Name));
             }
         };
     });
+}
 
 // ── Autorización RBAC ────────────────────────────────────────────────
 builder.Services.AddAuthorizationBuilder()

@@ -7,6 +7,7 @@ import {
 import MenuIcon from "@mui/icons-material/Menu";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import FolderIcon from "@mui/icons-material/Folder";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import ChecklistIcon from "@mui/icons-material/Checklist";
 import PlayCircleIcon from "@mui/icons-material/PlayCircle";
 import BugReportIcon from "@mui/icons-material/BugReport";
@@ -20,6 +21,7 @@ const drawerWidth = 240;
 const navigation = [
   { label: "Dashboard", path: "/", icon: <DashboardIcon /> },
   { label: "Proyectos", path: "/proyectos", icon: <FolderIcon /> },
+  { label: "Catálogo", path: "/catalogo", icon: <AccountTreeIcon /> },
   { label: "Casos de prueba", path: "/casos", icon: <ChecklistIcon /> },
   { label: "Ejecuciones", path: "/ejecuciones", icon: <PlayCircleIcon /> },
   { label: "Defectos", path: "/defectos", icon: <BugReportIcon /> },

@@ -8,6 +8,8 @@ namespace QAGuardian.Application.Features.Dashboard;
 
 public record ModuleErrorStat(string ModuleName, int FailedCount);
 public record TrendPoint(DateTime Date, int Passed, int Failed, decimal PassRate);
+/// <summary>Celda del heatmap de fallos: módulo × día.</summary>
+public record HeatmapCell(string ModuleName, string Date, int FailedCount);
 
 public record DashboardDto(
     int TotalProjects,
@@ -27,9 +29,14 @@ public record DashboardDto(
     decimal QualityScore,
     decimal AvailabilityPercent,
     IReadOnlyList<ModuleErrorStat> ErrorsByModule,
+    IReadOnlyList<HeatmapCell> Heatmap,
     IReadOnlyList<TrendPoint> Trend);
 
-public record GetDashboardStatsQuery(Guid? ProjectId = null) : IRequest<DashboardDto>;
+/// <summary>KPIs del dashboard, opcionalmente acotados por proyecto y rango de fechas.</summary>
+public record GetDashboardStatsQuery(
+    Guid? ProjectId = null,
+    DateTime? FromDate = null,
+    DateTime? ToDate = null) : IRequest<DashboardDto>;
 
 public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQuery, DashboardDto>
 {
@@ -60,12 +67,13 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
 
     public async Task<DashboardDto> Handle(GetDashboardStatsQuery request, CancellationToken ct)
     {
-        var cacheKey = CacheKeyPrefix + (request.ProjectId?.ToString() ?? "global");
+        var pid = request.ProjectId;
+        var since = request.FromDate ?? DateTime.UtcNow.AddDays(-30);
+        var until = request.ToDate ?? DateTime.UtcNow;
+
+        var cacheKey = $"{CacheKeyPrefix}{pid?.ToString() ?? "global"}:{since:yyyyMMdd}:{until:yyyyMMdd}";
         var cached = await _cache.GetAsync<DashboardDto>(cacheKey, ct);
         if (cached is not null) return cached;
-
-        var pid = request.ProjectId;
-        var since = DateTime.UtcNow.AddDays(-30);
 
         var totalProjects = await _projects.CountAsync(p => !p.IsDeleted && p.IsActive, ct);
         var totalTestCases = await _testCases.CountAsync(
@@ -74,7 +82,8 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
             tc => !tc.IsDeleted && tc.Framework != AutomationFramework.Manual && (pid == null || tc.ProjectId == pid), ct);
 
         var recentRuns = await _runs.ListAsync(
-            r => !r.IsDeleted && r.CreatedAt >= since && (pid == null || r.ProjectId == pid), ct);
+            r => !r.IsDeleted && r.CreatedAt >= since && r.CreatedAt <= until
+                && (pid == null || r.ProjectId == pid), ct);
 
         var completedRuns = recentRuns.Where(r => r.Status == RunStatus.Completed).ToList();
         var withResults = new List<TestRun>();
@@ -116,38 +125,56 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
         var availability = terminalRunCount == 0 ? 100m
             : Math.Round(completedRunCount * 100m / terminalRunCount, 2);
 
-        var errorsByModule = await ComputeErrorsByModuleAsync(withResults, pid, ct);
+        var moduleFailures = await ComputeModuleFailuresAsync(withResults, ct);
+        var errorsByModule = moduleFailures
+            .GroupBy(f => f.Module)
+            .Select(g => new ModuleErrorStat(g.Key, g.Sum(x => x.Count)))
+            .OrderByDescending(s => s.FailedCount)
+            .ToList();
+        var heatmap = moduleFailures
+            .Select(f => new HeatmapCell(f.Module, f.Date.ToString("yyyy-MM-dd"), f.Count))
+            .OrderBy(c => c.Date).ThenBy(c => c.ModuleName)
+            .ToList();
         var trend = ComputeTrend(withResults);
 
         var dto = new DashboardDto(totalProjects, totalTestCases, automated,
             totalTestCases == 0 ? 0 : Math.Round(automated * 100m / totalTestCases, 2),
             recentRuns.Count, executed, passed, failed, pending, passRate,
             avgDuration, openDefects, criticalOpen, vulns, qualityScore, availability,
-            errorsByModule, trend);
+            errorsByModule, heatmap, trend);
 
         await _cache.SetAsync(cacheKey, dto, CacheTtl, ct);
         return dto;
     }
 
-    private async Task<IReadOnlyList<ModuleErrorStat>> ComputeErrorsByModuleAsync(
-        List<TestRun> runs, Guid? projectId, CancellationToken ct)
+    /// <summary>Fallos agrupados por (módulo, día); base de "errores por módulo" y del heatmap.</summary>
+    private async Task<List<(string Module, DateTime Date, int Count)>> ComputeModuleFailuresAsync(
+        List<TestRun> runs, CancellationToken ct)
     {
-        var failedCaseIds = runs.SelectMany(r => r.Results)
-            .Where(res => res.Status == ResultStatus.Failed && res.TestCaseId.HasValue)
-            .Select(res => res.TestCaseId!.Value)
+        var failed = runs.SelectMany(r => r.Results)
+            .Where(res => res.Status == ResultStatus.Failed)
             .ToList();
-        if (failedCaseIds.Count == 0) return [];
+        if (failed.Count == 0) return [];
 
-        var failedCases = await _testCases.ListAsync(tc => failedCaseIds.Contains(tc.Id), ct);
-        var moduleIds = failedCases.Where(tc => tc.ModuleId.HasValue).Select(tc => tc.ModuleId!.Value).Distinct().ToList();
+        var caseIds = failed.Where(res => res.TestCaseId.HasValue)
+            .Select(res => res.TestCaseId!.Value).Distinct().ToList();
+        var cases = await _testCases.ListAsync(tc => caseIds.Contains(tc.Id), ct);
+        var caseModule = cases.ToDictionary(tc => tc.Id, tc => tc.ModuleId);
+        var moduleIds = cases.Where(tc => tc.ModuleId.HasValue).Select(tc => tc.ModuleId!.Value).Distinct().ToList();
         var modules = await _modules.ListAsync(m => moduleIds.Contains(m.Id), ct);
         var moduleNames = modules.ToDictionary(m => m.Id, m => m.Name);
 
-        return failedCases
-            .GroupBy(tc => tc.ModuleId.HasValue && moduleNames.TryGetValue(tc.ModuleId.Value, out var name)
-                ? name : "Sin módulo")
-            .Select(g => new ModuleErrorStat(g.Key, g.Count()))
-            .OrderByDescending(s => s.FailedCount)
+        string ModuleOf(TestResult res)
+        {
+            if (res.TestCaseId is { } id && caseModule.TryGetValue(id, out var modId)
+                && modId is { } m && moduleNames.TryGetValue(m, out var name))
+                return name;
+            return "Sin módulo";
+        }
+
+        return failed
+            .GroupBy(res => new { Module = ModuleOf(res), Date = res.ExecutedAt.Date })
+            .Select(g => (g.Key.Module, g.Key.Date, g.Count()))
             .ToList();
     }
 

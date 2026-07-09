@@ -17,6 +17,7 @@ public class DashboardReportTests
         AvgRunDurationSeconds: 12.5, OpenDefects: 8, CriticalDefectsOpen: 1,
         VulnerabilitiesHighOrCritical: 0, QualityScore: 89m, AvailabilityPercent: 97.5m,
         ErrorsByModule: [new ModuleErrorStat("Autenticación", 12), new ModuleErrorStat("Pagos", 5)],
+        Heatmap: [new HeatmapCell("Autenticación", "2026-07-01", 3)],
         Trend: []);
 
     private static RunReportGenerator CreateGenerator()

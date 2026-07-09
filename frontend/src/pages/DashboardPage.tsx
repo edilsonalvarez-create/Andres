@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  Alert, Box, Button, Card, CardContent, CircularProgress, Grid2 as Grid, Typography,
+  Alert, Box, Button, Card, CardContent, CircularProgress, Grid2 as Grid, TextField, Typography,
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import {
@@ -8,6 +8,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import FailureHeatmap from "../components/FailureHeatmap";
 import type { DashboardStats } from "../types";
 
 function Kpi({ label, value, accent }: { label: string; value: string | number; accent?: string }) {
@@ -28,13 +29,17 @@ function Kpi({ label, value, accent }: { label: string; value: string | number; 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api
-      .get<DashboardStats>("/dashboard")
+      .get<DashboardStats>("/dashboard", { params: { from: from || undefined, to: to || undefined } })
       .then((r) => setStats(r.data))
       .catch(() => setError("No fue posible cargar los indicadores."));
-  }, []);
+  }, [from, to]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (error) return <Alert severity="error">{error}</Alert>;
   if (!stats) return <CircularProgress />;
@@ -55,7 +60,10 @@ export default function DashboardPage() {
 
   const exportReport = (format: string) => {
     void api
-      .get("/dashboard/report", { params: { format }, responseType: "blob" })
+      .get("/dashboard/report", {
+        params: { format, from: from || undefined, to: to || undefined },
+        responseType: "blob",
+      })
       .then((r) => {
         const url = URL.createObjectURL(r.data as Blob);
         const link = document.createElement("a");
@@ -72,7 +80,11 @@ export default function DashboardPage() {
         <Typography variant="h5" fontWeight={700}>
           Dashboard ejecutivo
         </Typography>
-        <Box className="flex gap-2">
+        <Box className="flex items-center gap-2">
+          <TextField type="date" size="small" label="Desde" value={from}
+            onChange={(e) => setFrom(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
+          <TextField type="date" size="small" label="Hasta" value={to}
+            onChange={(e) => setTo(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} />
           <Button variant="outlined" size="small" startIcon={<DownloadIcon />}
             onClick={() => exportReport("Pdf")}>
             PDF
@@ -132,6 +144,15 @@ export default function DashboardPage() {
           </Card>
         </Grid>
       </Grid>
+
+      <Card>
+        <CardContent>
+          <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            Heatmap de fallos (módulo × día)
+          </Typography>
+          <FailureHeatmap cells={stats.heatmap} />
+        </CardContent>
+      </Card>
     </div>
   );
 }

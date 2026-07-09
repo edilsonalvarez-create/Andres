@@ -23,7 +23,8 @@ Swagger UI en `/swagger` (ambiente Development). Versionado por segmento de URL
 | `/testruns` | `GET`, `POST` (encola ejecución), `POST {id}/cancel`, `GET {id}/report?format=Pdf|Excel|Word|Html|Json|Csv|Xml`, `GET evidence?path=` | Ejecución: Admin/QA/DevOps/LiderTecnico |
 | `/defects` | `GET`, `POST`, `POST {id}/status` (workflow Nuevo→…→Cerrado) | Admin/QA/Desarrollador/LiderTecnico |
 | `/qualitygates` | `GET`, `POST`, `POST assign` | Escritura: gestión de proyectos |
-| `/dashboard` | `GET ?projectId=` KPIs, tendencia, errores por módulo, disponibilidad · `GET report?projectId=&format=Pdf\|Excel` | Autenticado |
+| `/dashboard` | `GET ?projectId=&from=&to=` KPIs, tendencia, errores por módulo, **heatmap módulo×día**, disponibilidad · `GET report?projectId=&from=&to=&format=Pdf\|Excel` | Autenticado |
+| `/catalog` | Requerimientos (`GET modules/{id}/requirements`, `POST requirements`) · Historias (`GET requirements/{id}/stories`, `POST stories`) · Versiones (`GET projects/{id}/versions`, `POST versions`, `POST versions/{id}/release`) · `GET projects/{id}/modules` | Lectura: autenticado · Escritura: gestión de proyectos |
 | `/integrations` | `POST` upsert config · `GET sonarqube/{projectId}` · `GET github/{projectId}/pulls` · `POST github/{projectId}/pulls/{n}/analyze` · `POST database-validation` · `POST postman/import` · `GET github/{projectId}/pipeline?download=` | Ver tabla de roles |
 | `/admin/users`, `/admin/notification-channels` | Gestión de usuarios y canales | Administrador / gestión |
 

@@ -4,6 +4,7 @@ import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import CatalogPage from "./pages/CatalogPage";
 import TestCasesPage from "./pages/TestCasesPage";
 import TestRunsPage from "./pages/TestRunsPage";
 import DefectsPage from "./pages/DefectsPage";
@@ -28,6 +29,7 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="proyectos" element={<ProjectsPage />} />
+        <Route path="catalogo" element={<CatalogPage />} />
         <Route path="casos" element={<TestCasesPage />} />
         <Route path="ejecuciones" element={<TestRunsPage />} />
         <Route path="defectos" element={<DefectsPage />} />

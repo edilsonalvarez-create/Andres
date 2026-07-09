@@ -114,6 +114,7 @@ export interface DashboardStats {
   qualityScore: number;
   availabilityPercent: number;
   errorsByModule: { moduleName: string; failedCount: number }[];
+  heatmap: { moduleName: string; date: string; failedCount: number }[];
   trend: { date: string; passed: number; failed: number; passRate: number }[];
 }
 

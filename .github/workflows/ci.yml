@@ -19,8 +19,10 @@ jobs:
         run: dotnet restore QAGuardian.sln
       - name: Compilar
         run: dotnet build QAGuardian.sln --no-restore -c Release
-      - name: Pruebas unitarias e integración
-        run: dotnet test QAGuardian.sln --no-build -c Release --logger trx --collect:"XPlat Code Coverage"
+      - name: Pruebas unitarias e integración (con piso de cobertura)
+        # /p:CollectCoverage activa el gate de regresión: falla si la cobertura
+        # cae bajo el Threshold definido en cada proyecto de pruebas.
+        run: dotnet test QAGuardian.sln --no-build -c Release --logger trx /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura
       - name: Publicar resultados
         uses: actions/upload-artifact@v4
         if: always()

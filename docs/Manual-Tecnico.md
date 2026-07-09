@@ -67,9 +67,28 @@ Se configuran con `POST /api/v1/integrations` (el token viaja una vez y se cifra
 - Postman: ruta a la collection `.json`
 - JMeter: ruta al plan `.jmx`
 - ZAP: URL objetivo del escaneo
+- VisualRegression: URL objetivo de la captura (regresión visual)
 
 Al iniciar una ejecución, `TestRunnerFactory` selecciona el motor según el tipo de la
 ejecución y recolecta los scripts activos del proyecto para ese tipo.
+
+### Regresión visual (detectar cambios visuales)
+
+Los casos de tipo **Visual** se ejecutan con `VisualRegressionRunner`:
+
+1. Captura la pantalla completa de la URL con `npx playwright screenshot`.
+2. **Primera ejecución del escenario**: la captura se promueve a *baseline* (tabla
+   `VisualBaselines`, clave = id del caso o nombre del escenario) y el resultado queda
+   en verde con la nota "baseline creado".
+3. **Ejecuciones siguientes**: compara la captura actual contra el baseline píxel a píxel
+   (`ImageSharpComparer`), genera la imagen de diferencias (píxeles distintos en rojo) y
+   adjunta las **tres imágenes** (baseline, actual, diff) como evidencia.
+4. **Aprueba** si el porcentaje de píxeles distintos ≤ `ThresholdPercent` (por defecto
+   0,10 %); si las dimensiones cambian, se considera cambio total. La tolerancia por píxel
+   (`PixelTolerance`, |ΔR|+|ΔG|+|ΔB|) y el umbral son configurables por baseline.
+
+Para re-establecer una referencia tras un cambio de diseño aprobado, se usa
+`VisualBaseline.UpdateBaseline(...)` (re-baseline).
 
 ## 4. Agente IA
 

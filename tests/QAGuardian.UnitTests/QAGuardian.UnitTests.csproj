@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\QAGuardian.Application\QAGuardian.Application.csproj" />
+    <ProjectReference Include="..\..\src\QAGuardian.Infrastructure\QAGuardian.Infrastructure.csproj" />
   </ItemGroup>
 </Project>

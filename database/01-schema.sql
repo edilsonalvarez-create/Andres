@@ -371,6 +371,24 @@ CREATE TABLE dbo.PipelineExecutions (
         REFERENCES dbo.Projects(Id) ON DELETE CASCADE
 );
 
+CREATE TABLE dbo.VisualBaselines (
+    Id               UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_VisualBaselines PRIMARY KEY DEFAULT NEWID(),
+    ProjectId        UNIQUEIDENTIFIER NOT NULL,
+    BaselineKey      NVARCHAR(100)    NOT NULL,  -- id del caso de prueba o nombre del escenario visual
+    BaselinePath     NVARCHAR(600)    NOT NULL,  -- ruta relativa de la imagen de referencia
+    Width            INT              NOT NULL,
+    Height           INT              NOT NULL,
+    ThresholdPercent DECIMAL(6,4)     NOT NULL DEFAULT 0.10,  -- % máximo de píxeles distintos tolerado
+    PixelTolerance   INT              NOT NULL DEFAULT 30,    -- |ΔR|+|ΔG|+|ΔB| a partir del cual cuenta como distinto
+    CreatedAt        DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy        NVARCHAR(256)    NULL,
+    UpdatedAt        DATETIME2        NULL,
+    UpdatedBy        NVARCHAR(256)    NULL,
+    IsDeleted        BIT              NOT NULL DEFAULT 0,
+    CONSTRAINT FK_VisualBaselines_Projects FOREIGN KEY (ProjectId)
+        REFERENCES dbo.Projects(Id) ON DELETE CASCADE
+);
+
 CREATE TABLE dbo.DatabaseValidationRuns (
     Id                UNIQUEIDENTIFIER NOT NULL CONSTRAINT PK_DatabaseValidationRuns PRIMARY KEY DEFAULT NEWID(),
     ProjectId         UNIQUEIDENTIFIER NOT NULL,

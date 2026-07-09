@@ -23,7 +23,8 @@ public enum AutomationFramework
     Postman = 2,
     JMeter = 3,
     OwaspZap = 4,
-    SqlValidator = 5
+    SqlValidator = 5,
+    VisualRegression = 6
 }
 
 public enum TestCaseStatus

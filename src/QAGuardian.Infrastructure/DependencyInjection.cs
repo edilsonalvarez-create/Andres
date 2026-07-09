@@ -17,6 +17,7 @@ using QAGuardian.Infrastructure.Reports;
 using QAGuardian.Infrastructure.Runners;
 using QAGuardian.Infrastructure.Storage;
 using QAGuardian.Infrastructure.Validation;
+using QAGuardian.Infrastructure.Visual;
 
 namespace QAGuardian.Infrastructure;
 
@@ -70,6 +71,8 @@ public static class DependencyInjection
         services.AddScoped<NewmanTestRunner>();
         services.AddScoped<JMeterTestRunner>();
         services.AddScoped<ZapScanRunner>();
+        services.AddScoped<VisualRegressionRunner>();
+        services.AddSingleton<IImageComparer, ImageSharpComparer>();
         services.AddScoped<ITestRunnerFactory, TestRunnerFactory>();
 
         // ── Integraciones externas ───────────────────────────────────

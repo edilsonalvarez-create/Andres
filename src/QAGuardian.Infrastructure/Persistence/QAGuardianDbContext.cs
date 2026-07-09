@@ -50,6 +50,7 @@ public class QAGuardianDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<NotificationChannelConfig> NotificationChannels => Set<NotificationChannelConfig>();
     public DbSet<IntegrationSetting> IntegrationSettings => Set<IntegrationSetting>();
+    public DbSet<VisualBaseline> VisualBaselines => Set<VisualBaseline>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -286,6 +287,15 @@ public class QAGuardianDbContext : DbContext
             e.ToTable("IntegrationSettings");
             e.Property(i => i.BaseUrl).HasMaxLength(500).IsRequired();
             e.HasIndex(i => new { i.ProjectId, i.Type }).IsUnique();
+        });
+
+        modelBuilder.Entity<VisualBaseline>(e =>
+        {
+            e.ToTable("VisualBaselines");
+            e.Property(v => v.BaselineKey).HasMaxLength(100).IsRequired();
+            e.Property(v => v.BaselinePath).HasMaxLength(600).IsRequired();
+            e.Property(v => v.ThresholdPercent).HasPrecision(6, 4);
+            e.HasIndex(v => new { v.ProjectId, v.BaselineKey }).IsUnique();
         });
     }
 

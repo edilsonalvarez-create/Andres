@@ -12,6 +12,7 @@ CREATE UNIQUE INDEX UX_ProjectVersions_Number  ON dbo.ProjectVersions(ProjectId,
 CREATE UNIQUE INDEX UX_TestCases_Code          ON dbo.TestCases(ProjectId, Code);
 CREATE UNIQUE INDEX UX_Defects_Code            ON dbo.Defects(ProjectId, Code);
 CREATE UNIQUE INDEX UX_IntegrationSettings     ON dbo.IntegrationSettings(ProjectId, Type);
+CREATE UNIQUE INDEX UX_VisualBaselines_Key     ON dbo.VisualBaselines(ProjectId, BaselineKey);
 CREATE UNIQUE INDEX UX_GateEvaluations_Run     ON dbo.QualityGateEvaluations(TestRunId);
 
 -- Índices de consulta frecuente (dashboards y listados)

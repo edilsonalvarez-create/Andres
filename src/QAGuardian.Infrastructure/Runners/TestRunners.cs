@@ -400,6 +400,7 @@ public class TestRunnerFactory : ITestRunnerFactory
         AutomationFramework.Postman => _services.GetRequiredService<NewmanTestRunner>(),
         AutomationFramework.JMeter => _services.GetRequiredService<JMeterTestRunner>(),
         AutomationFramework.OwaspZap => _services.GetRequiredService<ZapScanRunner>(),
+        AutomationFramework.VisualRegression => _services.GetRequiredService<VisualRegressionRunner>(),
         _ => throw new NotSupportedException($"Framework no soportado: {framework}")
     };
 
@@ -408,7 +409,8 @@ public class TestRunnerFactory : ITestRunnerFactory
         TestType.Api => Resolve(AutomationFramework.Postman),
         TestType.Performance => Resolve(AutomationFramework.JMeter),
         TestType.Security => Resolve(AutomationFramework.OwaspZap),
-        // Funcionales, regresión, smoke, visuales y E2E se ejecutan con Playwright.
+        TestType.Visual => Resolve(AutomationFramework.VisualRegression),
+        // Funcionales, regresión, smoke y E2E se ejecutan con Playwright.
         _ => Resolve(AutomationFramework.Playwright)
     };
 }

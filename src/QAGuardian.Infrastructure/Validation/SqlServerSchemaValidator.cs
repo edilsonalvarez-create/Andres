@@ -22,6 +22,7 @@ public class SqlServerSchemaValidator : IDatabaseSchemaValidator
         CompareSets(differences, "Llaves foráneas", source.ForeignKeys, target.ForeignKeys);
         CompareSets(differences, "Procedimientos", source.Procedures, target.Procedures);
         CompareSets(differences, "Triggers", source.Triggers, target.Triggers);
+        CompareSets(differences, "Migraciones", source.Migrations, target.Migrations);
 
         foreach (var (table, sourceCount) in source.RowCounts)
         {
@@ -45,7 +46,7 @@ public class SqlServerSchemaValidator : IDatabaseSchemaValidator
     private record SchemaSnapshot(
         HashSet<string> Tables, HashSet<string> Columns, HashSet<string> Indexes,
         HashSet<string> ForeignKeys, HashSet<string> Procedures, HashSet<string> Triggers,
-        Dictionary<string, long> RowCounts);
+        HashSet<string> Migrations, Dictionary<string, long> RowCounts);
 
     private static async Task<SchemaSnapshot> SnapshotAsync(string connectionString, CancellationToken ct)
     {
@@ -72,6 +73,11 @@ public class SqlServerSchemaValidator : IDatabaseSchemaValidator
               JOIN sys.tables t ON tr.parent_id = t.object_id
               JOIN sys.schemas s ON t.schema_id = s.schema_id", ct);
 
+        // Historial de migraciones EF Core (si el ambiente lo usa).
+        var migrations = await QuerySetAsync(connection,
+            @"IF OBJECT_ID('dbo.__EFMigrationsHistory') IS NOT NULL
+                  SELECT MigrationId FROM dbo.__EFMigrationsHistory", ct);
+
         var rowCounts = new Dictionary<string, long>();
         await using (var command = new SqlCommand(
             @"SELECT s.name + '.' + t.name, SUM(p.rows)
@@ -85,7 +91,7 @@ public class SqlServerSchemaValidator : IDatabaseSchemaValidator
                 rowCounts[reader.GetString(0)] = reader.GetInt64(1);
         }
 
-        return new SchemaSnapshot(tables, columns, indexes, foreignKeys, procedures, triggers, rowCounts);
+        return new SchemaSnapshot(tables, columns, indexes, foreignKeys, procedures, triggers, migrations, rowCounts);
     }
 
     private static async Task<HashSet<string>> QuerySetAsync(SqlConnection connection, string sql, CancellationToken ct)

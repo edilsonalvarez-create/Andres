@@ -20,7 +20,7 @@ public record TestRunDto(
 public record TestResultDto(
     Guid Id, string Name, ResultStatus Status, long DurationMs,
     string? ErrorMessage, string? StackTrace, DateTime ExecutedAt,
-    IReadOnlyList<EvidenceDto> Evidences);
+    string? MetricsJson, IReadOnlyList<EvidenceDto> Evidences);
 
 public record EvidenceDto(Guid Id, EvidenceType Type, string FilePath, string ContentType, long SizeBytes);
 
@@ -34,7 +34,7 @@ public static class TestRunMapper
         run.GateEvaluation?.Status.ToString(), run.GateEvaluation?.DeploymentApproved, run.ErrorMessage);
 
     public static TestResultDto ToDto(this TestResult r) => new(
-        r.Id, r.Name, r.Status, r.DurationMs, r.ErrorMessage, r.StackTrace, r.ExecutedAt,
+        r.Id, r.Name, r.Status, r.DurationMs, r.ErrorMessage, r.StackTrace, r.ExecutedAt, r.MetricsJson,
         r.Evidences.Select(e => new EvidenceDto(e.Id, e.Type, e.FilePath, e.ContentType, e.SizeBytes)).ToList());
 }
 
@@ -109,6 +109,7 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
     private readonly IDefectRepository _defects;
     private readonly IRepository<SecurityFinding> _findings;
     private readonly IRepository<AiAnalysis> _analyses;
+    private readonly IRepository<IntegrationSetting> _integrations;
     private readonly ITestRunnerFactory _runnerFactory;
     private readonly IEvidenceStorage _storage;
     private readonly INotificationDispatcher _notifications;
@@ -122,6 +123,7 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
         ITestRunRepository runs, IProjectRepository projects, ITestCaseRepository testCases,
         IQualityGateRepository gates, IDefectRepository defects,
         IRepository<SecurityFinding> findings, IRepository<AiAnalysis> analyses,
+        IRepository<IntegrationSetting> integrations,
         ITestRunnerFactory runnerFactory, IEvidenceStorage storage,
         INotificationDispatcher notifications, IRunProgressNotifier progress,
         IAiAnalysisService ai, IGitHubClient gitHub, IUnitOfWork uow,
@@ -134,6 +136,7 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
         _defects = defects;
         _findings = findings;
         _analyses = analyses;
+        _integrations = integrations;
         _runnerFactory = runnerFactory;
         _storage = storage;
         _notifications = notifications;
@@ -194,9 +197,36 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
 
         var runner = _runnerFactory.ResolveByTestType(run.RunType);
         var workDir = _storage.CreateRunDirectory(run.Id);
+        var parameters = await BuildRunParametersAsync(run, ct);
         var context = new TestRunContext(run.Id, run.ProjectId, run.RunType, run.Environment,
-            workDir, scripts, new Dictionary<string, string>());
+            workDir, scripts, parameters);
         return await runner.ExecuteAsync(context, ct);
+    }
+
+    /// <summary>Parámetros específicos del motor (p. ej. el environment de Postman importado).</summary>
+    private async Task<Dictionary<string, string>> BuildRunParametersAsync(TestRun run, CancellationToken ct)
+    {
+        var parameters = new Dictionary<string, string>();
+        if (run.RunType == TestType.Api)
+        {
+            var postman = (await _integrations.ListAsync(
+                s => s.ProjectId == run.ProjectId && s.Type == IntegrationType.Postman && s.IsEnabled, ct))
+                .FirstOrDefault();
+            if (postman?.ExtraJson is { } extra)
+            {
+                try
+                {
+                    var values = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(extra);
+                    if (values is not null && values.TryGetValue("postmanEnvironment", out var env))
+                        parameters["postmanEnvironment"] = env;
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    // ExtraJson malformado: se ejecuta sin environment.
+                }
+            }
+        }
+        return parameters;
     }
 
     private static void PersistResults(TestRun run, RunnerOutcome outcome)

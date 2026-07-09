@@ -251,16 +251,7 @@ public class JMeterTestRunner : ITestRunner
     private static (RunnerResultItem, object) ParseJtl(string jtlPath, TestScriptRef script)
     {
         var lines = File.ReadAllLines(jtlPath);
-        var samples = new List<(long Elapsed, bool Success, DateTimeOffset Timestamp)>();
-
-        foreach (var line in lines.Skip(1)) // encabezado CSV
-        {
-            var parts = line.Split(',');
-            if (parts.Length < 8) continue;
-            if (long.TryParse(parts[0], out var ts) && long.TryParse(parts[1], out var elapsed))
-                samples.Add((elapsed, string.Equals(parts[7], "true", StringComparison.OrdinalIgnoreCase),
-                    DateTimeOffset.FromUnixTimeMilliseconds(ts)));
-        }
+        var samples = ParseSamples(lines);
 
         if (samples.Count == 0)
         {
@@ -277,6 +268,8 @@ public class JMeterTestRunner : ITestRunner
             avgResponseMs = Math.Round(samples.Average(s => s.Elapsed), 2),
             maxResponseMs = samples.Max(s => s.Elapsed),
             minResponseMs = samples.Min(s => s.Elapsed),
+            // Usuarios concurrentes = máximo de hilos activos (columna allThreads del JTL).
+            concurrentUsers = samples.Max(s => s.AllThreads),
             errorCount = errors,
             errorRatePercent = Math.Round(errors * 100.0 / samples.Count, 2)
         };
@@ -287,6 +280,47 @@ public class JMeterTestRunner : ITestRunner
             (long)metrics.avgResponseMs,
             status == ResultStatus.Failed ? $"Tasa de error {metrics.errorRatePercent}% (umbral 1%)" : null,
             null, JsonSerializer.Serialize(metrics), [evidence]), metrics);
+    }
+
+    public readonly record struct JtlSample(long Elapsed, bool Success, DateTimeOffset Timestamp, int AllThreads);
+
+    /// <summary>
+    /// Parsea las líneas de un JTL (CSV). Mapea las columnas por nombre a partir del
+    /// encabezado (el orden del JTL es configurable); si no hay encabezado, usa el orden
+    /// por defecto de JMeter (timeStamp, elapsed, ..., success en la posición 7).
+    /// </summary>
+    public static List<JtlSample> ParseSamples(IReadOnlyList<string> lines)
+    {
+        var samples = new List<JtlSample>();
+        if (lines.Count == 0) return samples;
+
+        var header = lines[0].Split(',');
+        var hasHeader = header.Any(h => h.Equals("timeStamp", StringComparison.OrdinalIgnoreCase));
+
+        int iTs = 0, iElapsed = 1, iSuccess = 7, iThreads = -1;
+        if (hasHeader)
+        {
+            int Idx(string name) => Array.FindIndex(header, h => h.Equals(name, StringComparison.OrdinalIgnoreCase));
+            iTs = Idx("timeStamp");
+            iElapsed = Idx("elapsed");
+            iSuccess = Idx("success");
+            iThreads = Idx("allThreads");
+        }
+
+        foreach (var line in lines.Skip(hasHeader ? 1 : 0))
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var parts = line.Split(',');
+            var maxNeeded = Math.Max(iTs, iElapsed);
+            if (iTs < 0 || iElapsed < 0 || parts.Length <= maxNeeded) continue;
+            if (!long.TryParse(parts[iTs], out var ts) || !long.TryParse(parts[iElapsed], out var elapsed)) continue;
+
+            var success = iSuccess >= 0 && iSuccess < parts.Length
+                && string.Equals(parts[iSuccess], "true", StringComparison.OrdinalIgnoreCase);
+            var threads = iThreads >= 0 && iThreads < parts.Length && int.TryParse(parts[iThreads], out var t) ? t : 0;
+            samples.Add(new JtlSample(elapsed, success, DateTimeOffset.FromUnixTimeMilliseconds(ts), threads));
+        }
+        return samples;
     }
 }
 

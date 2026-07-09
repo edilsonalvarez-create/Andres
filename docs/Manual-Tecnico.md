@@ -24,7 +24,7 @@ Swagger UI en `/swagger` (ambiente Development). Versionado por segmento de URL
 | `/defects` | `GET`, `POST`, `POST {id}/status` (workflow Nuevo→…→Cerrado) | Admin/QA/Desarrollador/LiderTecnico |
 | `/qualitygates` | `GET`, `POST`, `POST assign` | Escritura: gestión de proyectos |
 | `/dashboard` | `GET ?projectId=` KPIs, tendencia, errores por módulo | Autenticado |
-| `/integrations` | `POST` upsert config · `GET sonarqube/{projectId}` · `GET github/{projectId}/pulls` · `POST github/{projectId}/pulls/{n}/analyze` · `POST database-validation` | Ver tabla de roles |
+| `/integrations` | `POST` upsert config · `GET sonarqube/{projectId}` · `GET github/{projectId}/pulls` · `POST github/{projectId}/pulls/{n}/analyze` · `POST database-validation` · `POST postman/import` · `GET github/{projectId}/pipeline?download=` | Ver tabla de roles |
 | `/admin/users`, `/admin/notification-channels` | Gestión de usuarios y canales | Administrador / gestión |
 
 ### Tiempo real (SignalR)
@@ -89,6 +89,34 @@ Los casos de tipo **Visual** se ejecutan con `VisualRegressionRunner`:
 
 Para re-establecer una referencia tras un cambio de diseño aprobado, se usa
 `VisualBaseline.UpdateBaseline(...)` (re-baseline).
+
+### Importar collections de Postman
+
+`POST /integrations/postman/import` con `{projectId, collectionJson, environmentJson?}`:
+valida el JSON, cuenta requests (recursivo) y variables, almacena la collection (y el
+environment si se envía) y **registra un caso de prueba de tipo API** con framework Postman
+listo para ejecutarse con Newman. El environment se guarda en la integración Postman del
+proyecto y se inyecta automáticamente (`-e`) en las ejecuciones de tipo API.
+
+### Generar pipeline de GitHub Actions
+
+`GET /integrations/github/{projectId}/pipeline` genera el YAML del pipeline del proyecto con
+el flujo Build → Unit Test → Playwright → API Test → Security → Performance → Deploy Staging
+→ Smoke Test → Producción, cableado contra la API de QA Guardian como quality gate. Con
+`?download=true` se descarga como archivo `.yml`.
+
+### Métricas de rendimiento (JMeter)
+
+`JMeterTestRunner` parsea el JTL mapeando columnas por nombre y expone: TPS, tiempo
+promedio/máximo/mínimo, **usuarios concurrentes** (máximo de `allThreads`), conteo y tasa de
+errores. Uso de CPU/memoria del servidor bajo prueba requiere el ServerAgent/PerfMon de
+JMeter (componente externo, no incluido).
+
+### Validación de esquemas SQL Server
+
+`SqlServerSchemaValidator` compara entre dos ambientes: tablas, columnas, índices, llaves
+foráneas, procedimientos, triggers, conteo de registros y el **historial de migraciones EF
+Core** (`__EFMigrationsHistory`, si el ambiente lo usa).
 
 ## 4. Agente IA
 

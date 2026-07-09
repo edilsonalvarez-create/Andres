@@ -53,4 +53,26 @@ public class IntegrationsController : ApiControllerBase
     [Authorize(Policy = Policies.ViewReports)]
     public async Task<IActionResult> GetDatabaseValidations(Guid projectId, CancellationToken ct)
         => Ok(await Mediator.Send(new GetDatabaseValidationsQuery(projectId), ct));
+
+    /// <summary>
+    /// Importa una collection de Postman (y opcionalmente su environment): valida, almacena
+    /// y registra un caso de prueba automatizado de tipo API listo para ejecutarse con Newman.
+    /// </summary>
+    [HttpPost("postman/import")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> ImportPostman([FromBody] ImportPostmanCollectionCommand command,
+        CancellationToken ct)
+        => FromResult(await Mediator.Send(command, ct));
+
+    /// <summary>Genera automáticamente el pipeline de GitHub Actions (quality gate) del proyecto.</summary>
+    [HttpGet("github/{projectId:guid}/pipeline")]
+    [Authorize(Policy = Policies.ViewReports)]
+    public async Task<IActionResult> GeneratePipeline(Guid projectId, [FromQuery] bool download = false,
+        CancellationToken ct = default)
+    {
+        var pipeline = await Mediator.Send(new GenerateGitHubActionsPipelineQuery(projectId), ct);
+        return download
+            ? File(System.Text.Encoding.UTF8.GetBytes(pipeline.Yaml), "text/yaml", pipeline.FileName)
+            : Ok(pipeline);
+    }
 }

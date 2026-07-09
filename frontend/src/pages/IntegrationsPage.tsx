@@ -63,6 +63,39 @@ export default function IntegrationsPage() {
     }
   };
 
+  const importPostman = async () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const collectionJson = await file.text();
+        const { data } = await api.post<{ testCaseCode: string; requestsImported: number }>(
+          "/integrations/postman/import", { projectId, collectionJson });
+        setMessage(`Collection importada como ${data.testCaseCode} (${data.requestsImported} requests).`);
+      } catch {
+        setMessage("No se pudo importar la collection. Verifique que sea un JSON de Postman válido.");
+      }
+    };
+    input.click();
+  };
+
+  const generatePipeline = () => {
+    void api
+      .get(`/integrations/github/${projectId}/pipeline`, { params: { download: true }, responseType: "blob" })
+      .then((r) => {
+        const url = URL.createObjectURL(r.data as Blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "qa-guardian-pipeline.yml";
+        link.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => setMessage("No se pudo generar el pipeline."));
+  };
+
   const sonarKpis = sonar && [
     { label: "Cobertura", value: `${sonar.coveragePercent}%` },
     { label: "Duplicación", value: `${sonar.duplicationPercent}%` },
@@ -78,7 +111,15 @@ export default function IntegrationsPage() {
         <Typography variant="h5" fontWeight={700}>
           Integraciones
         </Typography>
-        <ProjectSelect value={projectId} onChange={setProjectId} />
+        <Box className="flex items-center gap-2">
+          <Button variant="outlined" size="small" disabled={!projectId} onClick={() => void importPostman()}>
+            Importar Postman
+          </Button>
+          <Button variant="outlined" size="small" disabled={!projectId} onClick={generatePipeline}>
+            Generar pipeline
+          </Button>
+          <ProjectSelect value={projectId} onChange={setProjectId} />
+        </Box>
       </Box>
 
       {message && <Alert severity="info" onClose={() => setMessage(null)}>{message}</Alert>}

@@ -245,6 +245,24 @@ public class JMeterTestRunner : ITestRunner
             aggregate[script.Name] = metrics;
         }
 
+        // Uso de CPU/memoria del servidor bajo prueba: requiere un PerfMon Metrics
+        // Collector en el plan .jmx que lea de un ServerAgent en la máquina objetivo.
+        // La plataforma parsea y reporta esas métricas si el archivo está presente.
+        var perfmonPath = context.Parameters.TryGetValue("perfmonResults", out var pm)
+            ? pm : Path.Combine(context.WorkingDirectory, "perfmon.jtl");
+        if (File.Exists(perfmonPath))
+        {
+            var resources = PerfMonParser.Parse(await File.ReadAllLinesAsync(perfmonPath, ct));
+            if (resources.HasData)
+                aggregate["resources"] = new
+                {
+                    cpuAvgPercent = resources.CpuAvgPercent,
+                    cpuMaxPercent = resources.CpuMaxPercent,
+                    memoryAvgMb = resources.MemoryAvgMb,
+                    memoryMaxMb = resources.MemoryMaxMb
+                };
+        }
+
         return new RunnerOutcome(true, results, [], JsonSerializer.Serialize(aggregate), null);
     }
 

@@ -109,8 +109,24 @@ el flujo Build → Unit Test → Playwright → API Test → Security → Perfor
 
 `JMeterTestRunner` parsea el JTL mapeando columnas por nombre y expone: TPS, tiempo
 promedio/máximo/mínimo, **usuarios concurrentes** (máximo de `allThreads`), conteo y tasa de
-errores. Uso de CPU/memoria del servidor bajo prueba requiere el ServerAgent/PerfMon de
-JMeter (componente externo, no incluido).
+errores. **Uso de CPU/memoria** del servidor bajo prueba: si el plan incluye un *PerfMon
+Metrics Collector* que lee de un **ServerAgent** en la máquina objetivo, la plataforma parsea
+su archivo de resultados (`PerfMonParser`) y reporta CPU promedio/máx (%) y memoria
+promedio/máx (MB) en el nodo `resources` de las métricas. El ServerAgent es un componente
+estándar de JMeter que se despliega en el servidor bajo prueba (inherente a cómo JMeter
+captura recursos remotos); la ruta del archivo se indica con el parámetro `perfmonResults`
+o por defecto `perfmon.jtl` en el directorio de la ejecución.
+
+### Autoría y grabación de pruebas de Playwright
+
+- **Editar / crear specs**: `POST /testcases/script` guarda el contenido de una spec (o
+  collection/plan) y crea/actualiza el caso de prueba automatizado; `GET /testcases/{id}/script`
+  devuelve el contenido para editarlo. El editor está disponible en la página de Casos de prueba.
+- **Grabar**: `POST /testcases/record` con `{projectId, url}` ejecuta `playwright codegen`
+  (`PlaywrightRecorder`). En una instalación local con entorno gráfico abre una sesión
+  interactiva de grabación y devuelve la spec; en un servidor headless devuelve un **andamiaje
+  inicial** para la URL (con instrucciones para grabar localmente). La spec resultante se edita
+  y guarda con el editor.
 
 ### Validación de esquemas SQL Server
 

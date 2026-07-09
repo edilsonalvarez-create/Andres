@@ -73,6 +73,7 @@ public static class DependencyInjection
         services.AddScoped<ZapScanRunner>();
         services.AddScoped<VisualRegressionRunner>();
         services.AddSingleton<IImageComparer, ImageSharpComparer>();
+        services.AddScoped<IPlaywrightRecorder, PlaywrightRecorder>();
         services.AddScoped<ITestRunnerFactory, TestRunnerFactory>();
 
         // ── Integraciones externas ───────────────────────────────────

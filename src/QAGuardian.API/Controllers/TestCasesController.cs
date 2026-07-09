@@ -49,4 +49,22 @@ public class TestCasesController : ApiControllerBase
     [Authorize(Policy = Policies.ManageProjects)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
         => FromResult(await Mediator.Send(new DeleteTestCaseCommand(id), ct));
+
+    /// <summary>Crea o actualiza el script de un caso de prueba automatizado (autoría/edición).</summary>
+    [HttpPost("script")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> SaveScript([FromBody] SaveTestScriptCommand command, CancellationToken ct)
+        => FromResult(await Mediator.Send(command, ct));
+
+    /// <summary>Obtiene el contenido del script de un caso de prueba para editarlo.</summary>
+    [HttpGet("{id:guid}/script")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> GetScript(Guid id, CancellationToken ct)
+        => Ok(await Mediator.Send(new GetTestScriptQuery(id), ct));
+
+    /// <summary>Graba una spec de Playwright con codegen (o genera un andamiaje si no hay entorno gráfico).</summary>
+    [HttpPost("record")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> Record([FromBody] RecordPlaywrightScriptCommand command, CancellationToken ct)
+        => FromResult(await Mediator.Send(command, ct));
 }

@@ -4,8 +4,10 @@ import {
   Link, Table, TableBody, TableCell, TableHead, TableRow, Typography,
 } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { api } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
+import IntegrationConfigDialog from "../components/IntegrationConfigDialog";
 
 interface SonarMetrics {
   projectKey: string;
@@ -36,8 +38,9 @@ export default function IntegrationsPage() {
   const [pullsError, setPullsError] = useState(false);
   const [analyzing, setAnalyzing] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
-  useEffect(() => {
+  const loadIntegrationData = () => {
     if (!projectId) return;
     setSonar(null); setSonarMissing(false); setPulls(null); setPullsError(false);
 
@@ -47,7 +50,9 @@ export default function IntegrationsPage() {
     api.get<PullRequest[]>(`/integrations/github/${projectId}/pulls`)
       .then((r) => setPulls(r.data))
       .catch(() => setPullsError(true));
-  }, [projectId]);
+  };
+
+  useEffect(loadIntegrationData, [projectId]);
 
   const analyzePr = async (prNumber: number) => {
     setAnalyzing(prNumber);
@@ -112,6 +117,15 @@ export default function IntegrationsPage() {
           Integraciones
         </Typography>
         <Box className="flex items-center gap-2">
+          <Button
+            variant="contained"
+            size="small"
+            startIcon={<SettingsIcon />}
+            disabled={!projectId}
+            onClick={() => setConfigOpen(true)}
+          >
+            Configurar Integración
+          </Button>
           <Button variant="outlined" size="small" disabled={!projectId} onClick={() => void importPostman()}>
             Importar Postman
           </Button>
@@ -124,6 +138,18 @@ export default function IntegrationsPage() {
 
       {message && <Alert severity="info" onClose={() => setMessage(null)}>{message}</Alert>}
 
+      {projectId && (
+        <IntegrationConfigDialog
+          projectId={projectId}
+          open={configOpen}
+          onClose={() => setConfigOpen(false)}
+          onSuccess={() => {
+            setMessage("Integración configurada exitosamente.");
+            loadIntegrationData();
+          }}
+        />
+      )}
+
       <Card>
         <CardContent>
           <Box className="flex items-center gap-3 mb-3">
@@ -135,8 +161,8 @@ export default function IntegrationsPage() {
           </Box>
           {sonarMissing && (
             <Alert severity="warning">
-              SonarQube no está configurado para este proyecto. Configure la integración desde la API
-              (<code>POST /api/v1/integrations</code>).
+              SonarQube no está configurado para este proyecto. Use el botón{" "}
+              <strong>Configurar Integración</strong> para conectarlo.
             </Alert>
           )}
           {!sonar && !sonarMissing && projectId && <CircularProgress size={24} />}

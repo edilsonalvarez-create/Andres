@@ -14,6 +14,12 @@ public class IntegrationsController : ApiControllerBase
     public async Task<IActionResult> Upsert([FromBody] UpsertIntegrationCommand command, CancellationToken ct)
         => FromResult(await Mediator.Send(command, ct));
 
+    /// <summary>Prueba la conexión a una integración antes de guardarla.</summary>
+    [HttpPost("test-connection")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> TestConnection([FromBody] TestIntegrationConnectionCommand command, CancellationToken ct)
+        => FromResult(await Mediator.Send(command, ct));
+
     /// <summary>Métricas de SonarQube: cobertura, duplicación, bugs, hotspots, vulnerabilidades y code smells.</summary>
     [HttpGet("sonarqube/{projectId:guid}")]
     [Authorize(Policy = Policies.ViewReports)]

@@ -46,23 +46,34 @@ public class TestRunsController : ApiControllerBase
         return File(content, contentType, fileName);
     }
 
-    /// <summary>Descarga una evidencia (screenshot, video, log) por ruta relativa.</summary>
+    /// <summary>Obtiene la matriz de ejecución en JSON para visualización interactiva.</summary>
+    [HttpGet("{id:guid}/execution-matrix/json")]
+    [Authorize(Policy = Policies.ViewReports)]
+    public async Task<IActionResult> GetExecutionMatrixJson(Guid id,
+        [FromServices] IReportGenerator generator, CancellationToken ct)
+    {
+        var matrix = await generator.GetExecutionMatrixAsync(id, ct);
+        return Ok(matrix);
+    }
+
+    /// <summary>Descarga la matriz de ejecución con filtros en Excel.</summary>
+    [HttpGet("{id:guid}/execution-matrix")]
+    [Authorize(Policy = Policies.ViewReports)]
+    public async Task<IActionResult> DownloadExecutionMatrix(Guid id,
+        [FromServices] IReportGenerator generator, CancellationToken ct)
+    {
+        var (content, contentType, fileName) = await generator.GenerateExecutionMatrixReportAsync(id, ct);
+        return File(content, contentType, fileName);
+    }
+
+    /// <summary>Descarga una evidencia (screenshot, video, log) validando ownership del test run
+    /// y previniendo path traversal.</summary>
     [HttpGet("evidence")]
     [Authorize(Policy = Policies.ViewReports)]
-    public async Task<IActionResult> DownloadEvidence([FromQuery] string path,
-        [FromServices] IEvidenceStorage storage, CancellationToken ct)
+    public async Task<IActionResult> DownloadEvidence(
+        [FromQuery] string path, [FromQuery] Guid testRunId, CancellationToken ct)
     {
-        var stream = await storage.OpenReadAsync(path, ct);
-        var contentType = Path.GetExtension(path).ToLowerInvariant() switch
-        {
-            ".png" => "image/png",
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".webm" => "video/webm",
-            ".mp4" => "video/mp4",
-            ".json" => "application/json",
-            ".html" => "text/html",
-            _ => "application/octet-stream"
-        };
-        return File(stream, contentType, Path.GetFileName(path));
+        var result = await Mediator.Send(new DownloadEvidenceQuery(testRunId, path), ct);
+        return File(result.Content, result.ContentType, result.FileName);
     }
 }

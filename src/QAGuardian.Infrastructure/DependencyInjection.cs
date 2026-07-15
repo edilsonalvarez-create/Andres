@@ -72,6 +72,7 @@ public static class DependencyInjection
         services.AddScoped<JMeterTestRunner>();
         services.AddScoped<ZapScanRunner>();
         services.AddScoped<VisualRegressionRunner>();
+        services.AddScoped<SeleniumIdeTestRunner>();
         services.AddSingleton<IImageComparer, ImageSharpComparer>();
         services.AddScoped<IPlaywrightRecorder, PlaywrightRecorder>();
         services.AddScoped<ITestRunnerFactory, TestRunnerFactory>();
@@ -81,6 +82,7 @@ public static class DependencyInjection
         services.AddHttpClient<ISonarQubeClient, SonarQubeClient>();
         services.AddHttpClient<IGitHubClient, GitHubApiClient>();
         services.AddHttpClient("notifications");
+        services.AddScoped<IIntegrationConnectionTester, IntegrationConnectionTester>();
         services.AddScoped<IDatabaseSchemaValidator, SqlServerSchemaValidator>();
 
         // ── Agente IA ────────────────────────────────────────────────

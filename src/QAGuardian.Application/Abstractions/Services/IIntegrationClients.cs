@@ -32,12 +32,22 @@ public interface IGitHubClient
     Task<IReadOnlyList<GitHubPullRequestDto>> GetPullRequestsAsync(Guid projectId, string state = "open", CancellationToken ct = default);
     Task<GitHubCheckRunDto> CreateCheckRunAsync(Guid projectId, string headSha, string name,
         string status, string? conclusion, string title, string summary, CancellationToken ct = default);
+    /// <summary>Publica un commit status (alternativa a check run compatible con Personal Access Tokens).</summary>
+    Task CreateCommitStatusAsync(Guid projectId, string sha, string state, string context,
+        string description, CancellationToken ct = default);
     Task CommentOnPullRequestAsync(Guid projectId, int prNumber, string comment, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetPullRequestChangedFilesAsync(Guid projectId, int prNumber, CancellationToken ct = default);
     Task CreateReleaseAsync(Guid projectId, string tagName, string name, string body, CancellationToken ct = default);
     Task DispatchWorkflowAsync(Guid projectId, string workflowFileName, string gitRef,
         IReadOnlyDictionary<string, string>? inputs = null, CancellationToken ct = default);
     Task<IReadOnlyList<GitHubWorkflowRunDto>> GetWorkflowRunsAsync(Guid projectId, CancellationToken ct = default);
+}
+
+/// <summary>Puerto: prueba credenciales de una integración externa antes de guardarlas.</summary>
+public interface IIntegrationConnectionTester
+{
+    Task<bool> TestConnectionAsync(
+        Domain.Enums.IntegrationType type, string baseUrl, string? token, CancellationToken ct = default);
 }
 
 /// <summary>Diferencia detectada entre esquemas de base de datos.</summary>

@@ -9,6 +9,9 @@ import TestCasesPage from "./pages/TestCasesPage";
 import TestRunsPage from "./pages/TestRunsPage";
 import DefectsPage from "./pages/DefectsPage";
 import IntegrationsPage from "./pages/IntegrationsPage";
+import UsersPage from "./pages/UsersPage";
+import DocumentationPage from "./pages/DocumentationPage";
+import QualityGatesPage from "./pages/QualityGatesPage";
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
   const { auth } = useAuth();
@@ -32,8 +35,13 @@ export default function App() {
         <Route path="catalogo" element={<CatalogPage />} />
         <Route path="casos" element={<TestCasesPage />} />
         <Route path="ejecuciones" element={<TestRunsPage />} />
+        {/* La Matriz se fusionó dentro de Ejecuciones (maestro→detalle). */}
+        <Route path="matriz-ejecucion" element={<Navigate to="/ejecuciones" replace />} />
         <Route path="defectos" element={<DefectsPage />} />
+        <Route path="quality-gates" element={<QualityGatesPage />} />
         <Route path="integraciones" element={<IntegrationsPage />} />
+        <Route path="usuarios" element={<UsersPage />} />
+        <Route path="documentacion" element={<DocumentationPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

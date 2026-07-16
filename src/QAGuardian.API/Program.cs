@@ -9,6 +9,9 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using QAGuardian.API.Health;
 using QAGuardian.API.Hubs;
 using QAGuardian.API.Middleware;
 using QAGuardian.API.Services;
@@ -262,7 +265,10 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
-builder.Services.AddHealthChecks();
+// ── Health checks (liveness vs readiness) ────────────────────────────
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy("Proceso activo."), tags: ["live"])
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"]);
 
 var app = builder.Build();
 
@@ -318,7 +324,20 @@ app.UseMiddleware<AuditMiddleware>();
 
 app.MapControllers();
 app.MapHub<TestRunHub>("/hubs/testruns");
-app.MapHealthChecks("/health");
+// Liveness: el proceso responde (orquestadores / Docker HEALTHCHECK).
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("live")
+});
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("live")
+});
+// Readiness: DB accesible — no enviar tráfico si falla.
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = r => r.Tags.Contains("ready")
+});
 app.UseHangfireDashboard("/hangfire", new DashboardOptions
 {
     Authorization = [new HangfireDashboardAuthFilter()]

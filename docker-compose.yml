@@ -43,18 +43,25 @@ services:
       Security__EncryptionKey: ${ENCRYPTION_KEY:?Defina ENCRYPTION_KEY en .env}
       Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
       Seed__AdminEmail: ${ADMIN_EMAIL:-admin@qaguardian.local}
-      Seed__AdminPassword: ${ADMIN_PASSWORD:-QaGuardian.2026!}
+      Seed__AdminPassword: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD en .env (contraseña única, no el valor de ejemplo)}
       Cors__AllowedOrigins__0: "http://localhost:8081"
     ports:
       - "5080:8080"
     volumes:
       - evidence:/app/storage/evidence
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
 
   frontend:
     build:
       context: ./frontend
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "8081:80"
 

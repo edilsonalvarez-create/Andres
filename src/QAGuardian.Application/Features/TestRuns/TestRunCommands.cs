@@ -301,7 +301,9 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
     private async Task AnalyzeFailuresWithAiAsync(TestRun run, Project project, CancellationToken ct)
     {
         var systemUserId = Guid.Empty; // usuario "system" para defectos auto-registrados
-        foreach (var failure in run.Results.Where(r => r.Status == ResultStatus.Failed).Take(10))
+        // Sprint 7: menos llamadas LLM por run (costo) — top N fallos.
+        const int maxFailuresPerRun = 5;
+        foreach (var failure in run.Results.Where(r => r.Status == ResultStatus.Failed).Take(maxFailuresPerRun))
         {
             try
             {
@@ -312,19 +314,26 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
                     failure.Evidences.FirstOrDefault(e => e.Type == EvidenceType.Screenshot)?.FilePath,
                     run.RunType, project.Name), ct);
 
+                var modelLabel = diagnosis.ModelUsed.Length <= 100
+                    ? diagnosis.ModelUsed
+                    : diagnosis.ModelUsed[..100];
                 await _analyses.AddAsync(new AiAnalysis(
                     failure.Id, null, diagnosis.Diagnosis, diagnosis.ProbableCause,
                     diagnosis.Criticality, diagnosis.Recommendation, diagnosis.SuggestedPriority,
-                    diagnosis.EstimatedHours, diagnosis.SuggestedOwnerRole, diagnosis.ModelUsed), ct);
+                    diagnosis.EstimatedHours, diagnosis.SuggestedOwnerRole, modelLabel), ct);
 
-                // Registro automático de defecto para fallos críticos o altos.
-                if (diagnosis.Criticality >= RiskLevel.High)
+                // Auto-defecto solo con criticidad alta + confianza suficiente (anti-alucinación).
+                if (diagnosis.ShouldAutoCreateDefect())
                 {
                     var code = await _defects.NextCodeAsync(project.Id, ct);
+                    var evidenceLine = string.IsNullOrWhiteSpace(diagnosis.EvidenceQuote)
+                        ? ""
+                        : $"\nEvidencia: {diagnosis.EvidenceQuote}";
                     var defect = new Defect(project.Id, code,
                         $"[Auto] {failure.Name}",
                         $"Defecto registrado automáticamente por QA Guardian.\n\nDiagnóstico IA: {diagnosis.Diagnosis}\n" +
-                        $"Causa probable: {diagnosis.ProbableCause}\nRecomendación: {diagnosis.Recommendation}",
+                        $"Causa probable: {diagnosis.ProbableCause}\nRecomendación: {diagnosis.Recommendation}" +
+                        $"\nConfianza: {diagnosis.Confidence:P0}{evidenceLine}",
                         diagnosis.Criticality == RiskLevel.Critical ? DefectSeverity.Critical : DefectSeverity.Major,
                         diagnosis.SuggestedPriority, systemUserId, null, failure.Id,
                         stackTrace: failure.StackTrace);
@@ -333,6 +342,12 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
                         NotificationEvents.DefectCreated,
                         $"🐞 Defecto automático {code} en {project.Name}",
                         $"{failure.Name}: {diagnosis.Diagnosis}", project.Id, null), ct);
+                }
+                else if (diagnosis.Criticality >= RiskLevel.High)
+                {
+                    _logger.LogInformation(
+                        "IA omitió auto-defecto para {ResultId}: criticidad alta pero confianza {Confidence:F2} insuficiente.",
+                        failure.Id, diagnosis.Confidence);
                 }
             }
             catch (Exception ex)
@@ -353,7 +368,8 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
             await using var stream = await _storage.OpenReadAsync(log.FilePath, ct);
             using var reader = new StreamReader(stream);
             var content = await reader.ReadToEndAsync(ct);
-            return content.Length <= 4000 ? content : content[..4000] + "…";
+            // Sprint 7: alinear con LogsMaxChars del motor IA (menos I/O y tokens).
+            return content.Length <= 1500 ? content : content[..1500] + "…";
         }
         catch (Exception ex)
         {
@@ -380,18 +396,39 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
         QualityGateEvaluation? evaluation, CancellationToken ct)
     {
         if (run.CommitSha is null) return;
+
+        var approved = evaluation?.DeploymentApproved ?? run.Failed == 0;
+        var conclusion = approved ? "success" : "failure";
+        var summary = $"Pruebas: {run.Passed}/{run.TotalTests} exitosas ({run.PassRatePercent}%). " +
+                      $"Quality Gate: {evaluation?.Status.ToString() ?? "sin gate"}.";
+        var context = $"QA Guardian / {run.RunType}";
+
+        // Publicar el veredicto en el commit. Los check runs sólo los puede crear una GitHub App;
+        // con un Personal Access Token (el modelo de integración actual) se cae a un commit status,
+        // que produce el mismo indicador verde/rojo en el PR y sí es compatible con PAT.
         try
         {
-            var approved = evaluation?.DeploymentApproved ?? run.Failed == 0;
-            var conclusion = approved ? "success" : "failure";
-            var summary = $"Pruebas: {run.Passed}/{run.TotalTests} exitosas ({run.PassRatePercent}%). " +
-                          $"Quality Gate: {evaluation?.Status.ToString() ?? "sin gate"}.";
-
-            await _gitHub.CreateCheckRunAsync(project.Id, run.CommitSha,
-                $"QA Guardian / {run.RunType}", "completed", conclusion,
+            await _gitHub.CreateCheckRunAsync(project.Id, run.CommitSha, context, "completed", conclusion,
                 approved ? "Quality Gate superado" : "Quality Gate NO superado", summary, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Check run no disponible (¿PAT en vez de GitHub App?); usando commit status para el run {RunId}", run.Id);
+            try
+            {
+                await _gitHub.CreateCommitStatusAsync(project.Id, run.CommitSha, conclusion, context, summary, ct);
+            }
+            catch (Exception statusEx)
+            {
+                _logger.LogWarning(statusEx, "No se pudo publicar el commit status de GitHub para el run {RunId}", run.Id);
+            }
+        }
 
-            if (run.PullRequestNumber.HasValue)
+        // El comentario en el PR es independiente: no debe omitirse si falla la publicación del check/status.
+        if (run.PullRequestNumber.HasValue)
+        {
+            try
+            {
                 await _gitHub.CommentOnPullRequestAsync(project.Id, run.PullRequestNumber.Value,
                     $"## 🛡️ QA Guardian — {run.RunType}\n\n" +
                     $"| Métrica | Valor |\n|---|---|\n" +
@@ -399,10 +436,12 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
                     $"| ❌ Fallidas | {run.Failed} |\n| ⏭️ Omitidas | {run.Skipped} |\n" +
                     $"| % Éxito | {run.PassRatePercent}% |\n| Quality Gate | **{evaluation?.Status.ToString() ?? "N/A"}** |\n\n" +
                     (approved ? "✅ **Despliegue aprobado.**" : "🚫 **Despliegue bloqueado.**"), ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "No se pudo publicar el check de GitHub para el run {RunId}", run.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo comentar el veredicto en el PR #{Pr} para el run {RunId}",
+                    run.PullRequestNumber.Value, run.Id);
+            }
         }
     }
 }
@@ -444,10 +483,10 @@ public class GetTestRunsQueryHandler : IRequestHandler<GetTestRunsQuery, PagedRe
 
     public async Task<PagedResult<TestRunDto>> Handle(GetTestRunsQuery request, CancellationToken ct)
     {
-        var (items, total) = await _runs.PagedAsync(request.Page, request.PageSize,
-            r => r.ProjectId == request.ProjectId && !r.IsDeleted, ct);
+        var (items, total) = await _runs.PagedWithDetailsAsync(
+            request.Page, request.PageSize, request.ProjectId, ct);
         return new PagedResult<TestRunDto>(
-            items.OrderByDescending(r => r.CreatedAt).Select(r => r.ToDto()).ToList(),
+            items.Select(r => r.ToDto()).ToList(),
             total, request.Page, request.PageSize);
     }
 }

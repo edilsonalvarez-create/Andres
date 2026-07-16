@@ -1,20 +1,40 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { Box, CircularProgress } from "@mui/material";
 import { useAuth } from "./auth/AuthContext";
 import Layout from "./components/Layout";
 import LoginPage from "./pages/LoginPage";
-import DashboardPage from "./pages/DashboardPage";
-import ProjectsPage from "./pages/ProjectsPage";
-import CatalogPage from "./pages/CatalogPage";
-import TestCasesPage from "./pages/TestCasesPage";
-import TestRunsPage from "./pages/TestRunsPage";
-import DefectsPage from "./pages/DefectsPage";
-import IntegrationsPage from "./pages/IntegrationsPage";
-import UsersPage from "./pages/UsersPage";
-import DocumentationPage from "./pages/DocumentationPage";
-import QualityGatesPage from "./pages/QualityGatesPage";
+
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const ProjectsPage = lazy(() => import("./pages/ProjectsPage"));
+const CatalogPage = lazy(() => import("./pages/CatalogPage"));
+const TestCasesPage = lazy(() => import("./pages/TestCasesPage"));
+const TestRunsPage = lazy(() => import("./pages/TestRunsPage"));
+const DefectsPage = lazy(() => import("./pages/DefectsPage"));
+const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
+const DocumentationPage = lazy(() => import("./pages/DocumentationPage"));
+const QualityGatesPage = lazy(() => import("./pages/QualityGatesPage"));
+
+function PageLoader() {
+  return (
+    <Box className="flex items-center justify-center h-screen">
+      <CircularProgress />
+    </Box>
+  );
+}
+
+function LazyPage({ children }: { children: React.ReactElement }) {
+  return <Suspense fallback={<PageLoader />}>{children}</Suspense>;
+}
 
 function RequireAuth({ children }: { children: React.ReactElement }) {
-  const { auth } = useAuth();
+  const { auth, loading } = useAuth();
+  // Mientras se intenta renovar la sesión en silencio (cookie httpOnly), no redirigir todavía:
+  // evita un "flash" al login en cada recarga de página.
+  if (loading) {
+    return <PageLoader />;
+  }
   return auth ? children : <Navigate to="/login" replace />;
 }
 
@@ -30,18 +50,18 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<DashboardPage />} />
-        <Route path="proyectos" element={<ProjectsPage />} />
-        <Route path="catalogo" element={<CatalogPage />} />
-        <Route path="casos" element={<TestCasesPage />} />
-        <Route path="ejecuciones" element={<TestRunsPage />} />
+        <Route index element={<LazyPage><DashboardPage /></LazyPage>} />
+        <Route path="proyectos" element={<LazyPage><ProjectsPage /></LazyPage>} />
+        <Route path="catalogo" element={<LazyPage><CatalogPage /></LazyPage>} />
+        <Route path="casos" element={<LazyPage><TestCasesPage /></LazyPage>} />
+        <Route path="ejecuciones" element={<LazyPage><TestRunsPage /></LazyPage>} />
         {/* La Matriz se fusionó dentro de Ejecuciones (maestro→detalle). */}
         <Route path="matriz-ejecucion" element={<Navigate to="/ejecuciones" replace />} />
-        <Route path="defectos" element={<DefectsPage />} />
-        <Route path="quality-gates" element={<QualityGatesPage />} />
-        <Route path="integraciones" element={<IntegrationsPage />} />
-        <Route path="usuarios" element={<UsersPage />} />
-        <Route path="documentacion" element={<DocumentationPage />} />
+        <Route path="defectos" element={<LazyPage><DefectsPage /></LazyPage>} />
+        <Route path="quality-gates" element={<LazyPage><QualityGatesPage /></LazyPage>} />
+        <Route path="integraciones" element={<LazyPage><IntegrationsPage /></LazyPage>} />
+        <Route path="usuarios" element={<LazyPage><UsersPage /></LazyPage>} />
+        <Route path="documentacion" element={<LazyPage><DocumentationPage /></LazyPage>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

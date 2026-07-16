@@ -71,14 +71,8 @@ public class GetQualityGatesQueryHandler : IRequestHandler<GetQualityGatesQuery,
 
     public async Task<IReadOnlyList<QualityGateDto>> Handle(GetQualityGatesQuery request, CancellationToken ct)
     {
-        var gates = await _gates.ListAsync(g => !g.IsDeleted, ct);
-        var result = new List<QualityGateDto>();
-        foreach (var gate in gates)
-        {
-            var withConditions = await _gates.GetWithConditionsAsync(gate.Id, ct);
-            if (withConditions is not null) result.Add(withConditions.ToDto());
-        }
-        return result;
+        var gates = await _gates.ListWithConditionsAsync(ct);
+        return gates.Select(g => g.ToDto()).ToList();
     }
 }
 

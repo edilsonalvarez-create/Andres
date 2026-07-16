@@ -37,6 +37,8 @@ public interface IGitHubClient
         string description, CancellationToken ct = default);
     Task CommentOnPullRequestAsync(Guid projectId, int prNumber, string comment, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetPullRequestChangedFilesAsync(Guid projectId, int prNumber, CancellationToken ct = default);
+    /// <summary>Extracto truncado de patches del PR para grounding del generador de pruebas IA.</summary>
+    Task<string?> GetPullRequestDiffExcerptAsync(Guid projectId, int prNumber, int maxChars = 6000, CancellationToken ct = default);
     Task CreateReleaseAsync(Guid projectId, string tagName, string name, string body, CancellationToken ct = default);
     Task DispatchWorkflowAsync(Guid projectId, string workflowFileName, string gitRef,
         IReadOnlyDictionary<string, string>? inputs = null, CancellationToken ct = default);

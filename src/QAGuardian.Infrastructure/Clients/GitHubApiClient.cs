@@ -70,6 +70,16 @@ public class GitHubApiClient : IGitHubClient
             root.GetProperty("html_url").GetString() ?? "");
     }
 
+    public async Task CreateCommitStatusAsync(Guid projectId, string sha, string state, string context,
+        string description, CancellationToken ct = default)
+    {
+        var (repo, token) = await GetRepoAsync(projectId, ct);
+        // La descripción del commit status de GitHub admite máximo 140 caracteres.
+        var trimmed = description.Length <= 140 ? description : description[..140];
+        using var _ = await PostJsonAsync($"repos/{repo}/statuses/{sha}",
+            new { state, context, description = trimmed }, token, ct);
+    }
+
     public async Task CommentOnPullRequestAsync(Guid projectId, int prNumber, string comment, CancellationToken ct = default)
     {
         var (repo, token) = await GetRepoAsync(projectId, ct);
@@ -87,6 +97,38 @@ public class GitHubApiClient : IGitHubClient
             .Select(f => f.GetProperty("filename").GetString() ?? "")
             .Where(f => f.Length > 0)
             .ToList();
+    }
+
+    public async Task<string?> GetPullRequestDiffExcerptAsync(
+        Guid projectId, int prNumber, int maxChars = 6000, CancellationToken ct = default)
+    {
+        var (repo, token) = await GetRepoAsync(projectId, ct);
+        using var doc = await GetJsonAsync($"repos/{repo}/pulls/{prNumber}/files?per_page=100", token, ct);
+        if (doc is null) return null;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var file in doc.RootElement.EnumerateArray())
+        {
+            var name = file.TryGetProperty("filename", out var fn) ? fn.GetString() : null;
+            if (string.IsNullOrEmpty(name)) continue;
+            sb.AppendLine($"--- {name}");
+            if (file.TryGetProperty("patch", out var patch) && patch.ValueKind == JsonValueKind.String)
+            {
+                var text = patch.GetString() ?? "";
+                // Preferir cabeza del patch (cambios más relevantes suelen estar al inicio).
+                sb.AppendLine(text.Length <= 1200 ? text : text[..1200] + "…");
+            }
+            else
+            {
+                sb.AppendLine("(binario o sin patch)");
+            }
+
+            if (sb.Length >= maxChars) break;
+        }
+
+        if (sb.Length == 0) return null;
+        var result = sb.ToString();
+        return result.Length <= maxChars ? result : result[..maxChars] + "…";
     }
 
     public async Task CreateReleaseAsync(Guid projectId, string tagName, string name, string body, CancellationToken ct = default)

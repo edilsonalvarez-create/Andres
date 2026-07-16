@@ -31,9 +31,14 @@ public static class DependencyInjection
         services.AddDbContext<QAGuardianDbContext>(options =>
         {
             if (useSqlite)
-                options.UseSqlite(connectionString ?? "Data Source=qaguardian.db");
+                options.UseSqlite(connectionString ?? "Data Source=qaguardian.db",
+                    sqlite => sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
             else
-                options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure(3));
+                options.UseSqlServer(connectionString, sql =>
+                {
+                    sql.EnableRetryOnFailure(3);
+                    sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                });
             if (configuration.GetValue("Database:EnableSensitiveLogging", false))
                 options.EnableSensitiveDataLogging();
         });
@@ -66,13 +71,16 @@ public static class DependencyInjection
         services.AddScoped<ICacheService, DistributedCacheService>();
 
         // ── Runners de pruebas ───────────────────────────────────────
+        // Registrados como ITestRunner (no por tipo concreto): TestRunnerFactory resuelve
+        // inyectando IEnumerable<ITestRunner> e indexando por .Framework — agregar un runner
+        // nuevo solo requiere una línea aquí, sin tocar la fábrica (ADR-009).
         services.AddSingleton<ProcessExecutor>();
-        services.AddScoped<PlaywrightTestRunner>();
-        services.AddScoped<NewmanTestRunner>();
-        services.AddScoped<JMeterTestRunner>();
-        services.AddScoped<ZapScanRunner>();
-        services.AddScoped<VisualRegressionRunner>();
-        services.AddScoped<SeleniumIdeTestRunner>();
+        services.AddScoped<ITestRunner, PlaywrightTestRunner>();
+        services.AddScoped<ITestRunner, NewmanTestRunner>();
+        services.AddScoped<ITestRunner, JMeterTestRunner>();
+        services.AddScoped<ITestRunner, ZapScanRunner>();
+        services.AddScoped<ITestRunner, VisualRegressionRunner>();
+        services.AddScoped<ITestRunner, SeleniumIdeTestRunner>();
         services.AddSingleton<IImageComparer, ImageSharpComparer>();
         services.AddScoped<IPlaywrightRecorder, PlaywrightRecorder>();
         services.AddScoped<ITestRunnerFactory, TestRunnerFactory>();
@@ -85,7 +93,8 @@ public static class DependencyInjection
         services.AddScoped<IIntegrationConnectionTester, IntegrationConnectionTester>();
         services.AddScoped<IDatabaseSchemaValidator, SqlServerSchemaValidator>();
 
-        // ── Agente IA ────────────────────────────────────────────────
+        // ── Agente IA (Sprint 7: opciones de costo/precisión) ─────────
+        services.Configure<AnthropicAiOptions>(configuration.GetSection(AnthropicAiOptions.SectionName));
         services.AddScoped<IAiAnalysisService, ClaudeAiAnalysisService>();
         services.AddScoped<IAiTestGenerationService, ClaudeTestGenerationService>();
 

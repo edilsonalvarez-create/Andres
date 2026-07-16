@@ -119,10 +119,21 @@ public class AnalyzePullRequestCommandHandler : IRequestHandler<AnalyzePullReque
         if (changedFiles.Count == 0)
             return Result<PrAnalysisDto>.Failure("El Pull Request no contiene archivos modificados.");
 
-        // 1. Generación de casos de prueba con IA para los archivos impactados.
-        var generated = await _testGen.GenerateTestsForChangesAsync(project.Name, changedFiles, null, ct);
+        // Grounding Sprint 7: diff real + catálogo existente (evita duplicados/alucinaciones).
+        var diffExcerpt = await _gitHub.GetPullRequestDiffExcerptAsync(
+            project.Id, request.PullRequestNumber, ct: ct);
+        var catalog = await _testCases.ListAsync(tc => tc.ProjectId == project.Id, ct);
+        var catalogTitles = catalog
+            .OrderByDescending(tc => tc.CreatedAt)
+            .Take(25)
+            .Select(tc => $"{tc.Code}: {tc.Title}")
+            .ToList();
 
-        // 2. Persistir los casos generados como borradores para revisión del equipo QA.
+        // 1. Generación de casos de prueba con IA para los archivos impactados.
+        var generated = await _testGen.GenerateTestsForChangesAsync(
+            new TestGenerationRequest(project.Name, changedFiles, diffExcerpt, catalogTitles), ct);
+
+        // 2. Persistir los casos generados como borradores (incluye script sugerido como paso).
         var sequence = await _testCases.CountAsync(tc => tc.ProjectId == project.Id, ct);
         foreach (var gen in generated.TestCases)
         {
@@ -130,7 +141,10 @@ public class AnalyzePullRequestCommandHandler : IRequestHandler<AnalyzePullReque
             var code = $"TC-AI-{sequence:D4}";
             var testCase = new TestCase(project.Id, code, gen.Title,
                 gen.Framework == AutomationFramework.Postman ? TestType.Api : TestType.Functional,
-                TestPriority.High, preconditions: $"Generado por IA para PR #{request.PullRequestNumber}. {gen.Rationale}");
+                TestPriority.High,
+                preconditions: $"Generado por IA para PR #{request.PullRequestNumber}. {gen.Rationale}");
+            if (!string.IsNullOrWhiteSpace(gen.SuggestedScript))
+                testCase.AddStep(1, gen.SuggestedScript, "Script sugerido por IA — revisar antes de automatizar.");
             await _testCases.AddAsync(testCase, ct);
         }
 

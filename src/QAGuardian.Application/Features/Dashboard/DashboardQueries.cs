@@ -85,13 +85,13 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
             r => !r.IsDeleted && r.CreatedAt >= since && r.CreatedAt <= until
                 && (pid == null || r.ProjectId == pid), ct);
 
-        var completedRuns = recentRuns.Where(r => r.Status == RunStatus.Completed).ToList();
-        var withResults = new List<TestRun>();
-        foreach (var run in completedRuns)
-        {
-            var full = await _runs.GetWithResultsAsync(run.Id, ct);
-            if (full is not null) withResults.Add(full);
-        }
+        var completedIds = recentRuns
+            .Where(r => r.Status == RunStatus.Completed)
+            .Select(r => r.Id)
+            .ToList();
+        var withResults = completedIds.Count == 0
+            ? []
+            : await _runs.ListWithResultsAsync(r => completedIds.Contains(r.Id), ct);
 
         var executed = withResults.Sum(r => r.TotalTests);
         var passed = withResults.Sum(r => r.Passed);

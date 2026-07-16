@@ -22,7 +22,15 @@ public record AiDiagnosisDto(
     DefectPriority SuggestedPriority,
     decimal EstimatedHours,
     string SuggestedOwnerRole,
-    string ModelUsed);
+    string ModelUsed,
+    double Confidence = 0.5,
+    string? EvidenceQuote = null,
+    int? EstimatedPromptTokens = null)
+{
+    /// <summary>Solo auto-crear defectos cuando hay criticidad alta y confianza suficiente (anti-alucinación).</summary>
+    public bool ShouldAutoCreateDefect(double minConfidence = 0.75)
+        => Criticality >= RiskLevel.High && Confidence >= minConfidence;
+}
 
 /// <summary>Puerto: agente de IA que analiza fallos y genera diagnóstico, causa, criticidad y recomendación.</summary>
 public interface IAiAnalysisService
@@ -30,12 +38,18 @@ public interface IAiAnalysisService
     Task<AiDiagnosisDto> AnalyzeFailureAsync(FailureContext context, CancellationToken ct = default);
 }
 
+/// <summary>Entrada tipada para generación de pruebas (grounding con diff + catálogo existente).</summary>
+public record TestGenerationRequest(
+    string ProjectName,
+    IReadOnlyList<string> ChangedFiles,
+    string? DiffExcerpt = null,
+    IReadOnlyList<string>? ExistingCatalog = null);
+
 /// <summary>Puerto: agente de IA que genera casos de prueba a partir de archivos modificados en un PR.</summary>
 public interface IAiTestGenerationService
 {
     Task<GeneratedTestsDto> GenerateTestsForChangesAsync(
-        string projectName, IReadOnlyList<string> changedFiles,
-        string? diffExcerpt, CancellationToken ct = default);
+        TestGenerationRequest request, CancellationToken ct = default);
 }
 
 public record GeneratedTestCase(string Title, AutomationFramework Framework, string SuggestedScript, string Rationale);

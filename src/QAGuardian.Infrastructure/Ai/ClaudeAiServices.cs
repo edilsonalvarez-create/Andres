@@ -1,78 +1,132 @@
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Models.Messages;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Enums;
 
 namespace QAGuardian.Infrastructure.Ai;
 
 /// <summary>
-/// Agente IA de QA Guardian sobre la Messages API de Anthropic (claude-opus-4-8)
-/// con salida estructurada JSON. Si no hay API key configurada, degrada a un
-/// diagnóstico heurístico para no bloquear el pipeline.
+/// Diagnóstico de fallos con Anthropic. Sprint 7: modelo configurable (Sonnet por defecto),
+/// prompts compactos, sin thinking por defecto, caché por fingerprint y confidence anti-alucinación.
 /// </summary>
 public class ClaudeAiAnalysisService : IAiAnalysisService
 {
     private readonly AnthropicClient? _client;
+    private readonly ICacheService _cache;
+    private readonly AnthropicAiOptions _options;
     private readonly ILogger<ClaudeAiAnalysisService> _logger;
-    private const string ModelId = "claude-opus-4-8";
 
-    public ClaudeAiAnalysisService(IConfiguration configuration, ILogger<ClaudeAiAnalysisService> logger)
+    public ClaudeAiAnalysisService(
+        IOptions<AnthropicAiOptions> options,
+        ICacheService cache,
+        ILogger<ClaudeAiAnalysisService> logger)
     {
+        _options = options.Value;
+        _cache = cache;
         _logger = logger;
-        var apiKey = configuration["Anthropic:ApiKey"];
-        _client = string.IsNullOrWhiteSpace(apiKey) ? null : new AnthropicClient { ApiKey = apiKey };
+        _client = string.IsNullOrWhiteSpace(_options.ApiKey)
+            ? null
+            : new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<AiDiagnosisDto> AnalyzeFailureAsync(FailureContext context, CancellationToken ct = default)
     {
+        var cacheKey = AiFailureFingerprint.CacheKey(context);
+        var cached = await _cache.GetAsync<AiDiagnosisDto>(cacheKey, ct);
+        if (cached is not null)
+        {
+            _logger.LogInformation("Diagnóstico IA servido desde caché ({Fingerprint}).", AiFailureFingerprint.Compute(context));
+            return cached with { ModelUsed = $"{cached.ModelUsed}+cache" };
+        }
+
         if (_client is null)
         {
             _logger.LogInformation("Anthropic:ApiKey no configurada; usando diagnóstico heurístico.");
-            return HeuristicDiagnosis(context);
+            var heuristic = AiHeuristicEngine.Diagnose(context);
+            await _cache.SetAsync(cacheKey, heuristic, TimeSpan.FromMinutes(_options.CacheMinutes), ct);
+            return heuristic;
         }
 
         try
         {
+            var stack = AiFailureFingerprint.Truncate(context.StackTrace, _options.StackTraceMaxChars);
+            var logs = AiFailureFingerprint.Truncate(context.LogsExcerpt, _options.LogsMaxChars);
+            var sql = AiFailureFingerprint.Truncate(context.SqlQuery, _options.SqlMaxChars);
+
+            // Prompt compacto: menos tokens, exige evidencia citada (reduce alucinaciones).
             var prompt =
                 $"""
-                Analiza el siguiente fallo de una prueba automatizada y genera un diagnóstico.
+                Diagnostica este fallo de prueba. Sé breve y cíta evidencia literal del error/stack/logs.
 
                 Proyecto: {context.ProjectName}
-                Tipo de prueba: {context.TestType}
+                Tipo: {context.TestType}
                 Prueba: {context.TestName}
-                Mensaje de error: {context.ErrorMessage ?? "(no disponible)"}
-                StackTrace: {Truncate(context.StackTrace) ?? "(no disponible)"}
-                Extracto de logs: {Truncate(context.LogsExcerpt) ?? "(no disponible)"}
-                Consulta SQL relacionada: {context.SqlQuery ?? "(no disponible)"}
+                Error: {context.ErrorMessage ?? "(n/d)"}
+                Stack (top): {stack ?? "(n/d)"}
+                Logs: {logs ?? "(n/d)"}
+                SQL: {sql ?? "(n/d)"}
 
-                Responde en español. criticality: 0=Informativo,1=Bajo,2=Medio,3=Alto,4=Crítico.
-                suggestedPriority: 1=Baja,2=Media,3=Alta,4=Urgente.
-                suggestedOwnerRole debe ser uno de: Desarrollador, QA, DevOps, LiderTecnico.
+                Reglas:
+                - Responde en español, frases cortas.
+                - evidenceQuote: fragmento literal del error/stack/logs (máx 120 chars) o vacío si no hay.
+                - confidence: 0.0–1.0 (baja si falta evidencia).
+                - criticality: 0=Info,1=Bajo,2=Medio,3=Alto,4=Crítico.
+                - suggestedPriority: 1=Baja,2=Media,3=Alta,4=Urgente.
+                - suggestedOwnerRole: Desarrollador|QA|DevOps|LiderTecnico.
+                - No inventes detalles ausentes en el contexto.
                 """;
 
-            var response = await _client.Messages.Create(new MessageCreateParams
-            {
-                Model = ModelId,
-                MaxTokens = 2048,
-                Thinking = new ThinkingConfigAdaptive(),
-                System = "Eres un ingeniero senior de QA que diagnostica fallos de pruebas automatizadas.",
-                OutputConfig = new OutputConfig { Format = BuildDiagnosisFormat() },
-                Messages = [new() { Role = Role.User, Content = prompt }]
-            }, cancellationToken: ct);
+            var estimatedPromptTokens = AiFailureFingerprint.EstimateTokens(prompt);
+            MessageCreateParams createParams = _options.EnableThinking
+                ? new MessageCreateParams
+                {
+                    Model = _options.Model,
+                    MaxTokens = _options.MaxTokensDiagnosis,
+                    Thinking = new ThinkingConfigAdaptive(),
+                    System = "Ingeniero QA senior. Diagnósticos concisos, anclados en evidencia. Sin especulación.",
+                    OutputConfig = new OutputConfig { Format = BuildDiagnosisFormat() },
+                    Messages = [new() { Role = Role.User, Content = prompt }]
+                }
+                : new MessageCreateParams
+                {
+                    Model = _options.Model,
+                    MaxTokens = _options.MaxTokensDiagnosis,
+                    System = "Ingeniero QA senior. Diagnósticos concisos, anclados en evidencia. Sin especulación.",
+                    OutputConfig = new OutputConfig { Format = BuildDiagnosisFormat() },
+                    Messages = [new() { Role = Role.User, Content = prompt }]
+                };
+
+            var response = await _client.Messages.Create(createParams, cancellationToken: ct);
 
             var json = response.Content
                 .Select(b => b.Value)
                 .OfType<TextBlock>()
                 .Select(t => t.Text)
                 .FirstOrDefault();
-            if (json is null) return HeuristicDiagnosis(context);
+            if (json is null)
+            {
+                var fallback = AiHeuristicEngine.Diagnose(context);
+                await _cache.SetAsync(cacheKey, fallback, TimeSpan.FromMinutes(_options.CacheMinutes), ct);
+                return fallback;
+            }
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            return new AiDiagnosisDto(
+            var confidence = root.TryGetProperty("confidence", out var confEl)
+                ? Math.Clamp(confEl.GetDouble(), 0, 1)
+                : 0.5;
+            var evidence = root.TryGetProperty("evidenceQuote", out var evEl)
+                ? AiFailureFingerprint.Truncate(evEl.GetString(), 120)
+                : null;
+
+            // Si el modelo no cita evidencia, bajamos confianza (anti-alucinación).
+            if (string.IsNullOrWhiteSpace(evidence))
+                confidence = Math.Min(confidence, 0.55);
+
+            var diagnosis = new AiDiagnosisDto(
                 root.GetProperty("diagnosis").GetString() ?? "Sin diagnóstico",
                 root.GetProperty("probableCause").GetString() ?? "Desconocida",
                 (RiskLevel)root.GetProperty("criticality").GetInt32(),
@@ -80,12 +134,24 @@ public class ClaudeAiAnalysisService : IAiAnalysisService
                 (DefectPriority)root.GetProperty("suggestedPriority").GetInt32(),
                 root.GetProperty("estimatedHours").GetDecimal(),
                 root.GetProperty("suggestedOwnerRole").GetString() ?? "QA",
-                ModelId);
+                _options.Model,
+                confidence,
+                evidence,
+                estimatedPromptTokens);
+
+            _logger.LogInformation(
+                "Diagnóstico IA listo. Model={Model} PromptTokens~{Tokens} Confidence={Confidence:F2}",
+                _options.Model, estimatedPromptTokens, confidence);
+
+            await _cache.SetAsync(cacheKey, diagnosis, TimeSpan.FromMinutes(_options.CacheMinutes), ct);
+            return diagnosis;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "El agente IA falló; usando diagnóstico heurístico.");
-            return HeuristicDiagnosis(context);
+            var fallback = AiHeuristicEngine.Diagnose(context);
+            await _cache.SetAsync(cacheKey, fallback, TimeSpan.FromMinutes(_options.CacheMinutes), ct);
+            return fallback;
         }
     }
 
@@ -106,103 +172,104 @@ public class ClaudeAiAnalysisService : IAiAnalysisService
                 {
                     ["type"] = "string",
                     ["enum"] = new[] { "Desarrollador", "QA", "DevOps", "LiderTecnico" }
-                }
+                },
+                ["confidence"] = new Dictionary<string, object> { ["type"] = "number", ["minimum"] = 0, ["maximum"] = 1 },
+                ["evidenceQuote"] = new { type = "string" }
             }),
             ["required"] = JsonSerializer.SerializeToElement(new[]
             {
                 "diagnosis", "probableCause", "criticality", "recommendation",
-                "suggestedPriority", "estimatedHours", "suggestedOwnerRole"
+                "suggestedPriority", "estimatedHours", "suggestedOwnerRole",
+                "confidence", "evidenceQuote"
             }),
             ["additionalProperties"] = JsonSerializer.SerializeToElement(false)
         }
     };
-
-    /// <summary>Diagnóstico basado en reglas cuando el agente IA no está disponible.</summary>
-    private static AiDiagnosisDto HeuristicDiagnosis(FailureContext context)
-    {
-        var error = (context.ErrorMessage ?? string.Empty).ToLowerInvariant();
-        var (cause, criticality, owner) = error switch
-        {
-            var e when e.Contains("timeout") || e.Contains("timed out")
-                => ("Tiempo de espera agotado: posible lentitud del ambiente o selector inestable.", RiskLevel.Medium, "DevOps"),
-            var e when e.Contains("selector") || e.Contains("locator") || e.Contains("element")
-                => ("Selector o elemento no encontrado: cambio en la interfaz de usuario.", RiskLevel.Medium, "QA"),
-            var e when e.Contains("500") || e.Contains("internal server")
-                => ("Error interno del servidor durante la prueba.", RiskLevel.High, "Desarrollador"),
-            var e when e.Contains("401") || e.Contains("403") || e.Contains("unauthorized")
-                => ("Fallo de autenticación/autorización en el ambiente de pruebas.", RiskLevel.High, "DevOps"),
-            var e when e.Contains("sql") || e.Contains("database") || e.Contains("deadlock")
-                => ("Error de base de datos detectado.", RiskLevel.High, "Desarrollador"),
-            var e when e.Contains("assert")
-                => ("Aserción fallida: el comportamiento no coincide con lo esperado.", RiskLevel.Medium, "Desarrollador"),
-            _ => ("Causa no determinada automáticamente; requiere revisión manual.", RiskLevel.Medium, "QA")
-        };
-
-        return new AiDiagnosisDto(
-            $"La prueba '{context.TestName}' falló: {context.ErrorMessage ?? "sin mensaje de error"}.",
-            cause, criticality,
-            "Revisar el detalle del error y las evidencias adjuntas; reproducir localmente antes de corregir.",
-            criticality >= RiskLevel.High ? DefectPriority.High : DefectPriority.Medium,
-            criticality >= RiskLevel.High ? 4m : 2m,
-            owner,
-            "heuristic-fallback");
-    }
-
-    private static string? Truncate(string? value, int max = 4000)
-        => value is null ? null : value.Length <= max ? value : value[..max] + "…";
 }
 
-/// <summary>Agente IA que genera casos de prueba a partir de los archivos modificados en un PR.</summary>
+/// <summary>
+/// Generación de pruebas para PRs. Sprint 7: grounding con diff + catálogo existente, menos tokens.
+/// </summary>
 public class ClaudeTestGenerationService : IAiTestGenerationService
 {
     private readonly AnthropicClient? _client;
+    private readonly AnthropicAiOptions _options;
     private readonly ILogger<ClaudeTestGenerationService> _logger;
-    private const string ModelId = "claude-opus-4-8";
 
-    public ClaudeTestGenerationService(IConfiguration configuration, ILogger<ClaudeTestGenerationService> logger)
+    public ClaudeTestGenerationService(
+        IOptions<AnthropicAiOptions> options,
+        ILogger<ClaudeTestGenerationService> logger)
     {
+        _options = options.Value;
         _logger = logger;
-        var apiKey = configuration["Anthropic:ApiKey"];
-        _client = string.IsNullOrWhiteSpace(apiKey) ? null : new AnthropicClient { ApiKey = apiKey };
+        _client = string.IsNullOrWhiteSpace(_options.ApiKey)
+            ? null
+            : new AnthropicClient { ApiKey = _options.ApiKey };
     }
 
     public async Task<GeneratedTestsDto> GenerateTestsForChangesAsync(
-        string projectName, IReadOnlyList<string> changedFiles, string? diffExcerpt, CancellationToken ct = default)
+        TestGenerationRequest request, CancellationToken ct = default)
     {
         if (_client is null)
-            return HeuristicGeneration(changedFiles);
+            return AiHeuristicEngine.GenerateTests(request.ChangedFiles, request.ExistingCatalog, _options.MaxGeneratedTests);
 
         try
         {
+            var files = request.ChangedFiles.Take(40).ToList();
+            var diff = AiFailureFingerprint.Truncate(request.DiffExcerpt, _options.DiffMaxChars);
+            var catalog = (request.ExistingCatalog ?? [])
+                .Take(25)
+                .Select(t => $"- {t}")
+                .ToList();
+
             var prompt =
                 $"""
-                Proyecto: {projectName}
-                Archivos modificados en el Pull Request:
-                {string.Join('\n', changedFiles.Select(f => $"- {f}"))}
+                Genera hasta {_options.MaxGeneratedTests} casos de prueba para el impacto del PR.
+                Ancla cada caso en el diff/archivos. No inventes endpoints ni pantallas ausentes.
+                Evita duplicar títulos del catálogo existente.
 
-                {(diffExcerpt is null ? "" : $"Extracto del diff:\n{diffExcerpt}")}
+                Proyecto: {request.ProjectName}
+                Archivos:
+                {string.Join('\n', files.Select(f => $"- {f}"))}
 
-                Genera casos de prueba (máximo 8) para cubrir el impacto de estos cambios.
-                framework: 1=Playwright (UI/E2E), 2=Postman (API).
-                Para cada caso incluye un script sugerido breve y la justificación en español.
+                Diff:
+                {diff ?? "(diff no disponible — usa solo nombres de archivo y sé conservador)"}
+
+                Catálogo existente (no duplicar):
+                {(catalog.Count == 0 ? "(vacío)" : string.Join('\n', catalog))}
+
+                framework: 1=Playwright, 2=Postman.
+                suggestedScript breve. rationale en español, 1 frase.
                 """;
 
-            var response = await _client.Messages.Create(new MessageCreateParams
-            {
-                Model = ModelId,
-                MaxTokens = 4096,
-                Thinking = new ThinkingConfigAdaptive(),
-                System = "Eres un arquitecto de automatización QA. Diseñas casos de prueba precisos y relevantes.",
-                OutputConfig = new OutputConfig { Format = BuildGenerationFormat() },
-                Messages = [new() { Role = Role.User, Content = prompt }]
-            }, cancellationToken: ct);
+            MessageCreateParams createParams = _options.EnableThinking
+                ? new MessageCreateParams
+                {
+                    Model = _options.Model,
+                    MaxTokens = _options.MaxTokensGeneration,
+                    Thinking = new ThinkingConfigAdaptive(),
+                    System = "Arquitecto de automatización QA. Casos precisos, anclados al diff. Sin alucinaciones.",
+                    OutputConfig = new OutputConfig { Format = BuildGenerationFormat() },
+                    Messages = [new() { Role = Role.User, Content = prompt }]
+                }
+                : new MessageCreateParams
+                {
+                    Model = _options.Model,
+                    MaxTokens = _options.MaxTokensGeneration,
+                    System = "Arquitecto de automatización QA. Casos precisos, anclados al diff. Sin alucinaciones.",
+                    OutputConfig = new OutputConfig { Format = BuildGenerationFormat() },
+                    Messages = [new() { Role = Role.User, Content = prompt }]
+                };
+
+            var response = await _client.Messages.Create(createParams, cancellationToken: ct);
 
             var json = response.Content
                 .Select(b => b.Value)
                 .OfType<TextBlock>()
                 .Select(t => t.Text)
                 .FirstOrDefault();
-            if (json is null) return HeuristicGeneration(changedFiles);
+            if (json is null)
+                return AiHeuristicEngine.GenerateTests(request.ChangedFiles, request.ExistingCatalog, _options.MaxGeneratedTests);
 
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
@@ -212,17 +279,23 @@ public class ClaudeTestGenerationService : IAiTestGenerationService
                     (AutomationFramework)tc.GetProperty("framework").GetInt32(),
                     tc.GetProperty("suggestedScript").GetString() ?? "",
                     tc.GetProperty("rationale").GetString() ?? ""))
+                .Take(_options.MaxGeneratedTests)
                 .ToList();
             var areas = root.GetProperty("impactedAreas").EnumerateArray()
                 .Select(a => a.GetString() ?? "")
                 .Where(a => a.Length > 0)
                 .ToList();
+
+            _logger.LogInformation(
+                "Generación IA: {Count} casos, PromptTokens~{Tokens}, Model={Model}",
+                cases.Count, AiFailureFingerprint.EstimateTokens(prompt), _options.Model);
+
             return new GeneratedTestsDto(cases, areas);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "La generación de pruebas con IA falló; usando heurística.");
-            return HeuristicGeneration(changedFiles);
+            return AiHeuristicEngine.GenerateTests(request.ChangedFiles, request.ExistingCatalog, _options.MaxGeneratedTests);
         }
     }
 
@@ -260,40 +333,4 @@ public class ClaudeTestGenerationService : IAiTestGenerationService
             ["additionalProperties"] = JsonSerializer.SerializeToElement(false)
         }
     };
-
-    private static GeneratedTestsDto HeuristicGeneration(IReadOnlyList<string> changedFiles)
-    {
-        var areas = changedFiles
-            .Select(f => f.Split('/').FirstOrDefault() ?? f)
-            .Distinct()
-            .Take(10)
-            .ToList();
-
-        var cases = new List<GeneratedTestCase>();
-        if (changedFiles.Any(f => f.Contains("controller", StringComparison.OrdinalIgnoreCase)
-                                  || f.Contains("api", StringComparison.OrdinalIgnoreCase)))
-            cases.Add(new GeneratedTestCase(
-                "Validar contratos de API impactados por el PR",
-                AutomationFramework.Postman,
-                "// Collection sugerida: validar status 200, esquema y tiempos < 800ms en endpoints modificados",
-                "Se modificaron controladores/endpoints de API."));
-
-        if (changedFiles.Any(f => f.EndsWith(".tsx") || f.EndsWith(".jsx")
-                                  || f.Contains("component", StringComparison.OrdinalIgnoreCase)
-                                  || f.Contains("page", StringComparison.OrdinalIgnoreCase)))
-            cases.Add(new GeneratedTestCase(
-                "Verificar renderizado y flujo de las vistas modificadas",
-                AutomationFramework.Playwright,
-                "// Spec sugerida: navegar a las vistas afectadas, validar elementos clave y capturar screenshot",
-                "Se modificaron componentes de interfaz de usuario."));
-
-        if (cases.Count == 0)
-            cases.Add(new GeneratedTestCase(
-                "Smoke test de regresión sobre las áreas impactadas",
-                AutomationFramework.Playwright,
-                "// Spec sugerida: ejecutar el flujo principal de la aplicación de extremo a extremo",
-                "Cambios generales sin patrón identificable; se recomienda smoke test."));
-
-        return new GeneratedTestsDto(cases, areas);
-    }
 }

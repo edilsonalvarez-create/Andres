@@ -23,14 +23,14 @@ public class Repository<T> : IRepository<T> where T : BaseEntity
         => Set.FirstOrDefaultAsync(e => e.Id == id, ct);
 
     public Task<List<T>> ListAsync(Expression<Func<T, bool>>? predicate = null, CancellationToken ct = default)
-        => (predicate is null ? Set : Set.Where(predicate)).ToListAsync(ct);
+        => (predicate is null ? Set.AsNoTracking() : Set.AsNoTracking().Where(predicate)).ToListAsync(ct);
 
     public async Task<(List<T> Items, int Total)> PagedAsync(int page, int pageSize,
         Expression<Func<T, bool>>? predicate = null, CancellationToken ct = default)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
-        var query = predicate is null ? Set.AsQueryable() : Set.Where(predicate);
+        var query = predicate is null ? Set.AsNoTracking() : Set.AsNoTracking().Where(predicate);
         var total = await query.CountAsync(ct);
         var items = await query.Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         return (items, total);
@@ -80,11 +80,44 @@ public class TestRunRepository : Repository<TestRun>, ITestRunRepository
     public Task<TestRun?> GetWithResultsAsync(Guid id, CancellationToken ct = default)
         => Set.Include(r => r.Results).ThenInclude(res => res.Evidences)
               .Include(r => r.GateEvaluation)
+              .AsSplitQuery()
               .FirstOrDefaultAsync(r => r.Id == id, ct);
 
+    public Task<TestRun?> GetWithFullDetailsAsync(Guid id, CancellationToken ct = default)
+        => Set.Include(r => r.Results)
+              .ThenInclude(res => res.Evidences)
+              .AsSplitQuery()
+              .FirstOrDefaultAsync(r => r.Id == id, ct);
+
+    public Task<List<TestRun>> ListWithResultsAsync(Expression<Func<TestRun, bool>> predicate, CancellationToken ct = default)
+        => Set.AsNoTracking()
+              .Where(predicate)
+              .Include(r => r.Results)
+              .AsSplitQuery()
+              .ToListAsync(ct);
+
     public Task<List<TestRun>> GetRecentByProjectAsync(Guid projectId, int count, CancellationToken ct = default)
-        => Set.Where(r => r.ProjectId == projectId && !r.IsDeleted)
+        => Set.AsNoTracking()
+              .Where(r => r.ProjectId == projectId && !r.IsDeleted)
               .OrderByDescending(r => r.CreatedAt).Take(count).ToListAsync(ct);
+
+    public async Task<(List<TestRun> Items, int Total)> PagedWithDetailsAsync(int page, int pageSize,
+        Guid projectId, CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var query = Set.Where(r => r.ProjectId == projectId && !r.IsDeleted);
+        var total = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .AsNoTracking()
+            .Include(r => r.Results)
+            .Include(r => r.GateEvaluation)
+            .AsSplitQuery()
+            .ToListAsync(ct);
+        return (items, total);
+    }
 }
 
 public class DefectRepository : Repository<Defect>, IDefectRepository
@@ -118,6 +151,21 @@ public class UserRepository : Repository<User>, IUserRepository
 
     public Task<List<Role>> GetRolesAsync(CancellationToken ct = default)
         => Context.Roles.ToListAsync(ct);
+
+    public async Task<(List<User> Items, int Total)> PagedWithRolesAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var query = Set.Where(u => !u.IsDeleted);
+        var total = await query.CountAsync(ct);
+        var items = await query
+            .OrderBy(u => u.Email)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .AsNoTracking()
+            .Include(u => u.Roles)
+            .ToListAsync(ct);
+        return (items, total);
+    }
 }
 
 public class QualityGateRepository : Repository<QualityGate>, IQualityGateRepository
@@ -125,10 +173,17 @@ public class QualityGateRepository : Repository<QualityGate>, IQualityGateReposi
     public QualityGateRepository(QAGuardianDbContext context) : base(context) { }
 
     public Task<QualityGate?> GetWithConditionsAsync(Guid id, CancellationToken ct = default)
-        => Set.Include(g => g.Conditions).FirstOrDefaultAsync(g => g.Id == id, ct);
+        => Set.Include(g => g.Conditions).AsSplitQuery().FirstOrDefaultAsync(g => g.Id == id, ct);
 
     public Task<QualityGate?> GetDefaultAsync(CancellationToken ct = default)
-        => Set.Include(g => g.Conditions).FirstOrDefaultAsync(g => g.IsDefault && !g.IsDeleted, ct);
+        => Set.Include(g => g.Conditions).AsSplitQuery().FirstOrDefaultAsync(g => g.IsDefault && !g.IsDeleted, ct);
+
+    public Task<List<QualityGate>> ListWithConditionsAsync(CancellationToken ct = default)
+        => Set.AsNoTracking()
+              .Where(g => !g.IsDeleted)
+              .Include(g => g.Conditions)
+              .AsSplitQuery()
+              .ToListAsync(ct);
 }
 
 /// <summary>Unidad de trabajo: delega en el DbContext compartido por los repositorios.</summary>

@@ -8,7 +8,11 @@
       "launchUrl": "swagger",
       "applicationUrl": "http://localhost:5080",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Jwt__SigningKey": "dev-only-signing-key-min-32-chars!!",
+        "Security__EncryptionKey": "dev-only-encryption-key-32b!!",
+        "Seed__AdminEmail": "admin@qaguardian.local",
+        "Seed__AdminPassword": "QaGuardian.2026!"
       }
     }
   }

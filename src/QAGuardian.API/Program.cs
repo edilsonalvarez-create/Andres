@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using System.Threading.RateLimiting;
 using Asp.Versioning;
@@ -5,6 +6,7 @@ using Hangfire;
 using Hangfire.Dashboard;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using QAGuardian.API.Hubs;
@@ -32,6 +34,17 @@ builder.Services.AddHangfireServer();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<IRunProgressNotifier, SignalRRunProgressNotifier>();
+
+// ── Compresión de respuestas (Brotli/Gzip) ───────────────────────────
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(["application/json"]);
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = CompressionLevel.Fastest);
 
 // ── Autenticación: JWT local + OIDC externo (OAuth2/OpenID Connect) ─────
 // Con Oidc:Authority configurada, los tokens de un proveedor de identidad
@@ -198,7 +211,13 @@ builder.Services.AddCors(options => options.AddPolicy("frontend", policy => poli
 
 // ── MVC + Versionado + Swagger ───────────────────────────────────────
 builder.Services.AddControllers();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
+    options.MaximumReceiveMessageSize = 32 * 1024;
+});
 builder.Services
     .AddApiVersioning(options =>
     {
@@ -248,17 +267,42 @@ builder.Services.AddHealthChecks();
 var app = builder.Build();
 
 // ── Pipeline HTTP ────────────────────────────────────────────────────
+app.UseResponseCompression();
 app.UseSerilogRequestLogging();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-// Cabeceras de seguridad (OWASP A05)
+// Cabeceras de seguridad (OWASP A05:2025 - Security Misconfiguration).
+// CSP en modo report-only-equivalente pragmático para API+Swagger: el HTML servido por esta app
+// es solo Swagger UI (Development); la CSP que protege a los usuarios finales del SPA vive en
+// nginx.conf, que sirve el HTML real. Se define aquí también por defensa en profundidad y por si
+// se accede a Swagger o a alguna vista de error HTML directamente desde la API.
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["X-Frame-Options"] = "DENY";
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    context.Response.Headers["Permissions-Policy"] =
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()";
+    context.Response.Headers["Cross-Origin-Opener-Policy"] = "same-origin";
+    context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+    context.Response.Headers["Content-Security-Policy"] =
+        "default-src 'self'; " +
+        "script-src 'self'; " +
+        "style-src 'self' 'unsafe-inline'; " + // Swagger UI inyecta estilos inline
+        "img-src 'self' data:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self'; " +
+        "object-src 'none'; " +
+        "base-uri 'self'; " +
+        "form-action 'self'; " +
+        "frame-ancestors 'none'";
     await next();
 });
+
+// HSTS (OWASP A02:2025): fuerza HTTPS en el navegador tras la primera visita. Se omite en
+// Development para no romper `dotnet run` sobre HTTP en localhost.
+if (!app.Environment.IsDevelopment())
+    app.UseHsts();
 
 if (app.Environment.IsDevelopment())
 {
@@ -281,13 +325,33 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 });
 
 // ── Inicialización de base de datos ──────────────────────────────────
+// OWASP A07:2025 (Identification & Authentication Failures): la contraseña del
+// admin semilla NUNCA tiene un valor por defecto embebido en código. Debe
+// configurarse explícitamente (env var / user-secrets / secret manager). Fuera
+// de Development, además se rechaza si coincide con un valor público conocido
+// (el que documentaba el README de versiones anteriores).
+const string KnownPublicDefaultPassword = "QaGuardian.2026!";
+
 if (!app.Configuration.GetValue("Database:SkipInitialization", false))
 {
+    var seedEmail = app.Configuration["Seed:AdminEmail"];
+    var seedPassword = app.Configuration["Seed:AdminPassword"];
+
+    if (string.IsNullOrWhiteSpace(seedEmail) || string.IsNullOrWhiteSpace(seedPassword))
+        throw new InvalidOperationException(
+            "Seed:AdminEmail y Seed:AdminPassword son obligatorios (variables de entorno " +
+            "Seed__AdminEmail / Seed__AdminPassword, user-secrets o secret manager). " +
+            "No existe un valor por defecto: defina credenciales únicas por ambiente.");
+
+    if (!app.Environment.IsDevelopment()
+        && string.Equals(seedPassword, KnownPublicDefaultPassword, StringComparison.Ordinal))
+        throw new InvalidOperationException(
+            "Seed:AdminPassword coincide con el valor público documentado en versiones anteriores " +
+            "de QA Guardian. Defina una contraseña única y secreta para este ambiente.");
+
     using var scope = app.Services.CreateScope();
     var initializer = scope.ServiceProvider.GetRequiredService<DbInitializer>();
-    await initializer.InitializeAsync(
-        app.Configuration["Seed:AdminEmail"] ?? "admin@qaguardian.local",
-        app.Configuration["Seed:AdminPassword"] ?? "QaGuardian.2026!");
+    await initializer.InitializeAsync(seedEmail, seedPassword);
 }
 
 app.Run();

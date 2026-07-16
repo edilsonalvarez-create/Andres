@@ -60,6 +60,9 @@ public class TestCase : AuditableEntity
         Tags = tags;
     }
 
+    /// <summary>Vincula el caso a una historia de usuario (trazabilidad Req → Story → Case).</summary>
+    public void LinkUserStory(Guid? userStoryId) => UserStoryId = userStoryId;
+
     public void Automate(AutomationFramework framework, string scriptPath)
     {
         if (framework == AutomationFramework.Manual)

@@ -15,6 +15,10 @@ const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 const DocumentationPage = lazy(() => import("./pages/DocumentationPage"));
 const QualityGatesPage = lazy(() => import("./pages/QualityGatesPage"));
+const TraceabilityPage = lazy(() => import("./pages/TraceabilityPage"));
+const NotificationsAdminPage = lazy(() => import("./pages/NotificationsAdminPage"));
+const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
+const AuditPage = lazy(() => import("./pages/AuditPage"));
 
 function PageLoader() {
   return (
@@ -59,6 +63,10 @@ export default function App() {
         <Route path="matriz-ejecucion" element={<Navigate to="/ejecuciones" replace />} />
         <Route path="defectos" element={<LazyPage><DefectsPage /></LazyPage>} />
         <Route path="quality-gates" element={<LazyPage><QualityGatesPage /></LazyPage>} />
+        <Route path="trazabilidad" element={<LazyPage><TraceabilityPage /></LazyPage>} />
+        <Route path="aprobaciones" element={<LazyPage><ApprovalsPage /></LazyPage>} />
+        <Route path="notificaciones" element={<LazyPage><NotificationsAdminPage /></LazyPage>} />
+        <Route path="auditoria" element={<LazyPage><AuditPage /></LazyPage>} />
         <Route path="integraciones" element={<LazyPage><IntegrationsPage /></LazyPage>} />
         <Route path="usuarios" element={<LazyPage><UsersPage /></LazyPage>} />
         <Route path="documentacion" element={<LazyPage><DocumentationPage /></LazyPage>} />

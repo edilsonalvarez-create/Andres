@@ -51,6 +51,7 @@ public class QAGuardianDbContext : DbContext
     public DbSet<NotificationChannelConfig> NotificationChannels => Set<NotificationChannelConfig>();
     public DbSet<IntegrationSetting> IntegrationSettings => Set<IntegrationSetting>();
     public DbSet<VisualBaseline> VisualBaselines => Set<VisualBaseline>();
+    public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -296,6 +297,16 @@ public class QAGuardianDbContext : DbContext
             e.Property(v => v.BaselinePath).HasMaxLength(600).IsRequired();
             e.Property(v => v.ThresholdPercent).HasPrecision(6, 4);
             e.HasIndex(v => new { v.ProjectId, v.BaselineKey }).IsUnique();
+        });
+
+        modelBuilder.Entity<ApprovalRequest>(e =>
+        {
+            e.ToTable("ApprovalRequests");
+            e.Property(a => a.Title).HasMaxLength(300).IsRequired();
+            e.Property(a => a.Comment).HasMaxLength(2000);
+            e.Property(a => a.DecisionComment).HasMaxLength(2000);
+            e.HasIndex(a => new { a.Status, a.ProjectId });
+            e.HasIndex(a => new { a.TargetEntityId, a.Type, a.Status });
         });
     }
 

@@ -33,9 +33,16 @@ public class DbInitializer
         // SQLite (desarrollo/pruebas) crea el esquema directo del modelo.
         // Bases creadas por los scripts SQL del DBA: use Database:SkipInitialization=true.
         if (_context.Database.IsSqlServer())
+        {
             await _context.Database.MigrateAsync(ct);
+            await EnsureSprint8SqlServerTablesAsync(ct);
+        }
         else
+        {
             await _context.Database.EnsureCreatedAsync(ct);
+            // EnsureCreated no altera DBs existentes: tablas Sprint 8 se crean de forma aditiva.
+            await EnsureSprint8SqliteTablesAsync(ct);
+        }
         await SeedRolesAsync(ct);
         await SeedAdminAsync(adminEmail, adminPassword, ct);
         await SeedDefaultQualityGateAsync(ct);
@@ -129,5 +136,62 @@ public class DbInitializer
         gate.AddCondition(GateMetric.HighVulnerabilities, GateOperator.LessOrEqual, 2m, isBlocking: false);
         _context.QualityGates.Add(gate);
         await _context.SaveChangesAsync(ct);
+    }
+
+    /// <summary>Crea tablas Sprint 8 en SQLite ya existente (EnsureCreated no migra).</summary>
+    private async Task EnsureSprint8SqliteTablesAsync(CancellationToken ct)
+    {
+        await _context.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "ApprovalRequests" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_ApprovalRequests" PRIMARY KEY,
+                "ProjectId" TEXT NOT NULL,
+                "Type" INTEGER NOT NULL,
+                "TargetEntityId" TEXT NOT NULL,
+                "Title" TEXT NOT NULL,
+                "Comment" TEXT NULL,
+                "Status" INTEGER NOT NULL,
+                "RequestedByUserId" TEXT NOT NULL,
+                "DecidedByUserId" TEXT NULL,
+                "DecidedAt" TEXT NULL,
+                "DecisionComment" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "CreatedBy" TEXT NULL,
+                "UpdatedAt" TEXT NULL,
+                "UpdatedBy" TEXT NULL,
+                "IsDeleted" INTEGER NOT NULL
+            );
+            """, ct);
+    }
+
+    private async Task EnsureSprint8SqlServerTablesAsync(CancellationToken ct)
+    {
+        await _context.Database.ExecuteSqlRawAsync(
+            """
+            IF OBJECT_ID(N'dbo.ApprovalRequests', N'U') IS NULL
+            BEGIN
+                CREATE TABLE [ApprovalRequests] (
+                    [Id] uniqueidentifier NOT NULL,
+                    [ProjectId] uniqueidentifier NOT NULL,
+                    [Type] int NOT NULL,
+                    [TargetEntityId] uniqueidentifier NOT NULL,
+                    [Title] nvarchar(300) NOT NULL,
+                    [Comment] nvarchar(2000) NULL,
+                    [Status] int NOT NULL,
+                    [RequestedByUserId] uniqueidentifier NOT NULL,
+                    [DecidedByUserId] uniqueidentifier NULL,
+                    [DecidedAt] datetime2 NULL,
+                    [DecisionComment] nvarchar(2000) NULL,
+                    [CreatedAt] datetime2 NOT NULL,
+                    [CreatedBy] nvarchar(max) NULL,
+                    [UpdatedAt] datetime2 NULL,
+                    [UpdatedBy] nvarchar(max) NULL,
+                    [IsDeleted] bit NOT NULL,
+                    CONSTRAINT [PK_ApprovalRequests] PRIMARY KEY ([Id])
+                );
+                CREATE INDEX [IX_ApprovalRequests_Status_ProjectId] ON [ApprovalRequests] ([Status], [ProjectId]);
+                CREATE INDEX [IX_ApprovalRequests_TargetEntityId_Type_Status] ON [ApprovalRequests] ([TargetEntityId], [Type], [Status]);
+            END
+            """, ct);
     }
 }

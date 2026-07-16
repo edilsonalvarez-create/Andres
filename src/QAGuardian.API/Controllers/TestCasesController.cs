@@ -50,6 +50,15 @@ public class TestCasesController : ApiControllerBase
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
         => FromResult(await Mediator.Send(new DeleteTestCaseCommand(id), ct));
 
+    /// <summary>Vincula (o desvincula) el caso a una historia de usuario para trazabilidad.</summary>
+    [HttpPut("{id:guid}/user-story")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> LinkUserStory(Guid id, [FromBody] LinkTestCaseToUserStoryCommand command,
+        CancellationToken ct)
+        => id != command.Id
+            ? BadRequest(new { error = "El identificador de la ruta no coincide con el cuerpo." })
+            : FromResult(await Mediator.Send(command, ct));
+
     /// <summary>Crea o actualiza el script de un caso de prueba automatizado (autoría/edición).</summary>
     [HttpPost("script")]
     [Authorize(Policy = Policies.ManageProjects)]
@@ -61,6 +70,13 @@ public class TestCasesController : ApiControllerBase
     [Authorize(Policy = Policies.ManageProjects)]
     public async Task<IActionResult> GetScript(Guid id, CancellationToken ct)
         => Ok(await Mediator.Send(new GetTestScriptQuery(id), ct));
+
+    /// <summary>Ejecuta un único caso de prueba con el runner de su framework ("probar" desde el editor).</summary>
+    [HttpPost("{id:guid}/run")]
+    [Authorize(Policy = Policies.ManageProjects)]
+    public async Task<IActionResult> Run(Guid id, [FromQuery] EnvironmentType environment = EnvironmentType.QA,
+        CancellationToken ct = default)
+        => FromResult(await Mediator.Send(new RunTestCaseCommand(id, environment), ct));
 
     /// <summary>Graba una spec de Playwright con codegen (o genera un andamiaje si no hay entorno gráfico).</summary>
     [HttpPost("record")]

@@ -24,7 +24,8 @@ public enum AutomationFramework
     JMeter = 3,
     OwaspZap = 4,
     SqlValidator = 5,
-    VisualRegression = 6
+    VisualRegression = 6,
+    SeleniumIde = 7
 }
 
 public enum TestCaseStatus
@@ -183,4 +184,19 @@ public enum IntegrationType
     Postman = 5,
     Playwright = 6,
     SqlServer = 7
+}
+
+/// <summary>Tipos de aprobación humana (Sprint 8 — enterprise sign-off).</summary>
+public enum ApprovalType
+{
+    TestCaseActivation = 1,
+    VersionRelease = 2,
+    GateOverride = 3
+}
+
+public enum ApprovalStatus
+{
+    Pending = 1,
+    Approved = 2,
+    Rejected = 3
 }

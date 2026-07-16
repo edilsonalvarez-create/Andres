@@ -11,7 +11,7 @@ namespace QAGuardian.Application.Features.TestCases;
 public record TestStepDto(int Order, string Action, string ExpectedResult);
 
 public record TestCaseDto(
-    Guid Id, Guid ProjectId, Guid? ModuleId, string Code, string Title,
+    Guid Id, Guid ProjectId, Guid? ModuleId, Guid? UserStoryId, string Code, string Title,
     string? Preconditions, TestType Type, TestPriority Priority, TestCaseStatus Status,
     AutomationFramework Framework, string? AutomationScriptPath, string? Tags,
     IReadOnlyList<TestStepDto> Steps);
@@ -19,7 +19,7 @@ public record TestCaseDto(
 public static class TestCaseMapper
 {
     public static TestCaseDto ToDto(this TestCase tc) => new(
-        tc.Id, tc.ProjectId, tc.ModuleId, tc.Code, tc.Title, tc.Preconditions,
+        tc.Id, tc.ProjectId, tc.ModuleId, tc.UserStoryId, tc.Code, tc.Title, tc.Preconditions,
         tc.Type, tc.Priority, tc.Status, tc.Framework, tc.AutomationScriptPath, tc.Tags,
         tc.Steps.OrderBy(s => s.Order).Select(s => new TestStepDto(s.Order, s.Action, s.ExpectedResult)).ToList());
 }
@@ -219,5 +219,31 @@ public class GetTestCaseByIdQueryHandler : IRequestHandler<GetTestCaseByIdQuery,
         var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
             ?? throw new NotFoundException(nameof(TestCase), request.Id);
         return testCase.ToDto();
+    }
+}
+
+// ─────────────────────────── Trazabilidad: vincular historia ───────────────────────────
+
+public record LinkTestCaseToUserStoryCommand(Guid Id, Guid? UserStoryId) : IRequest<Result<TestCaseDto>>;
+
+public class LinkTestCaseToUserStoryCommandHandler
+    : IRequestHandler<LinkTestCaseToUserStoryCommand, Result<TestCaseDto>>
+{
+    private readonly ITestCaseRepository _testCases;
+    private readonly IUnitOfWork _uow;
+
+    public LinkTestCaseToUserStoryCommandHandler(ITestCaseRepository testCases, IUnitOfWork uow)
+    {
+        _testCases = testCases;
+        _uow = uow;
+    }
+
+    public async Task<Result<TestCaseDto>> Handle(LinkTestCaseToUserStoryCommand request, CancellationToken ct)
+    {
+        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
+            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        testCase.LinkUserStory(request.UserStoryId);
+        await _uow.SaveChangesAsync(ct);
+        return Result<TestCaseDto>.Success(testCase.ToDto());
     }
 }

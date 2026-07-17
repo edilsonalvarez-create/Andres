@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Depurar API (.NET 9)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "Compilar solución (.NET)",
+      "program": "${workspaceFolder}/src/QAGuardian.API/bin/Debug/net9.0/QAGuardian.API.dll",
+      "cwd": "${workspaceFolder}/src/QAGuardian.API",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5080"
+      },
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Now listening on:\\s+(https?://\\S+)"
+      }
+    },
+    {
+      "name": "Abrir Frontend (Edge)",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "App completa (API + Frontend)",
+      "configurations": ["Depurar API (.NET 9)"],
+      "preLaunchTask": "Ejecutar Frontend (Vite)",
+      "stopAll": true
+    }
+  ]
+}

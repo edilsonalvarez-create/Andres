@@ -1,0 +1,15 @@
+# Sprint 16-B: SOLO desarrollo local. `docker compose up` carga este archivo
+# automáticamente junto a docker-compose.yml y publica 1433/6379 al host para
+# poder conectar SSMS/Redis Insight desde la máquina del desarrollador.
+#
+# Producción/CI: use únicamente el archivo base, sin este override, p. ej.:
+#   docker compose -f docker-compose.yml up -d
+# o elimine/no despliegue este archivo en el servidor de producción.
+services:
+  sqlserver:
+    ports:
+      - "1433:1433"
+
+  redis:
+    ports:
+      - "6379:6379"

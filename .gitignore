@@ -25,8 +25,10 @@ appsettings.*.Local.json
 ## Evidencias y datos generados en runtime
 storage/evidence/
 storage/reports/
+storage/runner-workspaces/
 logs/
 
 ## SO
 Thumbs.db
 .DS_Store
+StrykerOutput/

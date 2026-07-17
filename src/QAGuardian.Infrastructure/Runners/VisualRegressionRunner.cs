@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QAGuardian.Application.Abstractions.Persistence;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Entities;
@@ -19,7 +20,8 @@ public class VisualRegressionRunner : ITestRunner
     private const decimal DefaultThresholdPercent = 0.10m;
     private const int DefaultPixelTolerance = 30;
 
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
     private readonly IImageComparer _comparer;
     private readonly IEvidenceStorage _storage;
     private readonly IRepository<VisualBaseline> _baselines;
@@ -27,10 +29,13 @@ public class VisualRegressionRunner : ITestRunner
     private readonly ILogger<VisualRegressionRunner> _logger;
 
     public VisualRegressionRunner(
-        ProcessExecutor executor, IImageComparer comparer, IEvidenceStorage storage,
+        ISandboxedProcessExecutor executor,
+        IOptions<RunnerSandboxOptions> options,
+        IImageComparer comparer, IEvidenceStorage storage,
         IRepository<VisualBaseline> baselines, IUnitOfWork uow, ILogger<VisualRegressionRunner> logger)
     {
         _executor = executor;
+        _options = options.Value;
         _comparer = comparer;
         _storage = storage;
         _baselines = baselines;
@@ -53,7 +58,8 @@ public class VisualRegressionRunner : ITestRunner
             var url = script.ScriptPath;
             var actualPath = Path.Combine(context.WorkingDirectory, $"visual-{key}-actual.png");
 
-            var capture = await CaptureAsync(url, actualPath, context.WorkingDirectory, ct);
+            var capture = await CaptureAsync(
+                context.TestRunId, url, actualPath, context.WorkingDirectory, ct);
             if (!capture)
             {
                 results.Add(new RunnerResultItem(script.TestCaseId, script.Name, ResultStatus.Failed, 0,
@@ -77,12 +83,18 @@ public class VisualRegressionRunner : ITestRunner
         return new RunnerOutcome(true, results, [], null, null);
     }
 
-    private async Task<bool> CaptureAsync(string url, string outputPath, string workDir, CancellationToken ct)
+    private async Task<bool> CaptureAsync(
+        Guid testRunId, string url, string outputPath, string workDir, CancellationToken ct)
     {
-        // Playwright CLI captura la pantalla completa de una URL sin necesidad de una spec.
-        var run = await _executor.RunAsync("npx",
-            $"playwright screenshot --full-page \"{url}\" \"{outputPath}\"",
-            workDir, TimeSpan.FromMinutes(3), null, ct);
+        var sandbox = _executor.UsesContainerSandbox;
+        var outArg = sandbox
+            ? RunnerSandboxPaths.ToWorkspaceRelative(outputPath, workDir)
+            : outputPath;
+        var run = await _executor.RunAsync(new ScriptExecutionRequest(
+            testRunId, "npx",
+            $"playwright screenshot --full-page \"{url}\" \"{outArg}\"",
+            workDir, TimeSpan.FromMinutes(3), null, [outArg],
+            sandbox ? _options.SandboxImagePlaywright : null), ct);
         if (!File.Exists(outputPath))
         {
             _logger.LogWarning("Playwright no capturó {Url} (exit {Exit}): {Err}",

@@ -49,22 +49,26 @@ public class ImportPostmanCollectionCommandHandler
     private readonly ITestCaseRepository _testCases;
     private readonly IRepository<IntegrationSetting> _settings;
     private readonly IEvidenceStorage _storage;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
     public ImportPostmanCollectionCommandHandler(
         IProjectRepository projects, ITestCaseRepository testCases,
-        IRepository<IntegrationSetting> settings, IEvidenceStorage storage, IUnitOfWork uow)
+        IRepository<IntegrationSetting> settings, IEvidenceStorage storage,
+        IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
         _testCases = testCases;
         _settings = settings;
         _storage = storage;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<PostmanImportResultDto>> Handle(
         ImportPostmanCollectionCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 

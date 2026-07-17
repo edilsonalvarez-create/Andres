@@ -15,10 +15,11 @@ public class PostmanImportHandlerTests
     private readonly ITestCaseRepository _testCases = Substitute.For<ITestCaseRepository>();
     private readonly IRepository<IntegrationSetting> _settings = Substitute.For<IRepository<IntegrationSetting>>();
     private readonly IEvidenceStorage _storage = Substitute.For<IEvidenceStorage>();
+    private readonly IProjectAccessService _access = Substitute.For<IProjectAccessService>();
     private readonly IUnitOfWork _uow = Substitute.For<IUnitOfWork>();
 
     private ImportPostmanCollectionCommandHandler CreateHandler()
-        => new(_projects, _testCases, _settings, _storage, _uow);
+        => new(_projects, _testCases, _settings, _storage, _access, _uow);
 
     private const string ValidCollection = """
         {
@@ -35,6 +36,8 @@ public class PostmanImportHandlerTests
 
     public PostmanImportHandlerTests()
     {
+        _access.EnsureCanAccessProjectAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
         _projects.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(new Project("PAY", "Pagos", null, null));
         _testCases.CountAsync(Arg.Any<System.Linq.Expressions.Expression<Func<TestCase, bool>>>(),

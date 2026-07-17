@@ -18,15 +18,19 @@ public class GetSonarMetricsQueryHandler : IRequestHandler<GetSonarMetricsQuery,
 {
     private readonly ISonarQubeClient _sonar;
     private readonly IRepository<IntegrationSetting> _settings;
+    private readonly IProjectAccessService _access;
 
-    public GetSonarMetricsQueryHandler(ISonarQubeClient sonar, IRepository<IntegrationSetting> settings)
+    public GetSonarMetricsQueryHandler(
+        ISonarQubeClient sonar, IRepository<IntegrationSetting> settings, IProjectAccessService access)
     {
         _sonar = sonar;
         _settings = settings;
+        _access = access;
     }
 
     public async Task<SonarMetricsDto?> Handle(GetSonarMetricsQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var settings = await _settings.ListAsync(
             s => s.ProjectId == request.ProjectId && s.Type == IntegrationType.SonarQube && s.IsEnabled, ct);
         var setting = settings.FirstOrDefault();
@@ -49,12 +53,20 @@ public class GetGitHubPullRequestsQueryHandler
     : IRequestHandler<GetGitHubPullRequestsQuery, IReadOnlyList<GitHubPullRequestDto>>
 {
     private readonly IGitHubClient _gitHub;
+    private readonly IProjectAccessService _access;
 
-    public GetGitHubPullRequestsQueryHandler(IGitHubClient gitHub) => _gitHub = gitHub;
+    public GetGitHubPullRequestsQueryHandler(IGitHubClient gitHub, IProjectAccessService access)
+    {
+        _gitHub = gitHub;
+        _access = access;
+    }
 
-    public Task<IReadOnlyList<GitHubPullRequestDto>> Handle(
+    public async Task<IReadOnlyList<GitHubPullRequestDto>> Handle(
         GetGitHubPullRequestsQuery request, CancellationToken ct)
-        => _gitHub.GetPullRequestsAsync(request.ProjectId, request.State, ct);
+    {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
+        return await _gitHub.GetPullRequestsAsync(request.ProjectId, request.State, ct);
+    }
 }
 
 // ─────────────── Agente inteligente: análisis de Pull Request ───────────────
@@ -91,13 +103,15 @@ public class AnalyzePullRequestCommandHandler : IRequestHandler<AnalyzePullReque
     private readonly IGitHubClient _gitHub;
     private readonly IAiTestGenerationService _testGen;
     private readonly IBackgroundJobScheduler _scheduler;
+    private readonly IProjectAccessService _access;
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _uow;
 
     public AnalyzePullRequestCommandHandler(
         IProjectRepository projects, ITestCaseRepository testCases, ITestRunRepository runs,
         IGitHubClient gitHub, IAiTestGenerationService testGen,
-        IBackgroundJobScheduler scheduler, ICurrentUserService currentUser, IUnitOfWork uow)
+        IBackgroundJobScheduler scheduler, IProjectAccessService access,
+        ICurrentUserService currentUser, IUnitOfWork uow)
     {
         _projects = projects;
         _testCases = testCases;
@@ -105,12 +119,14 @@ public class AnalyzePullRequestCommandHandler : IRequestHandler<AnalyzePullReque
         _gitHub = gitHub;
         _testGen = testGen;
         _scheduler = scheduler;
+        _access = access;
         _currentUser = currentUser;
         _uow = uow;
     }
 
     public async Task<Result<PrAnalysisDto>> Handle(AnalyzePullRequestCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 
@@ -180,12 +196,20 @@ public record UpsertIntegrationCommand(
 
 public class UpsertIntegrationCommandValidator : AbstractValidator<UpsertIntegrationCommand>
 {
-    public UpsertIntegrationCommandValidator()
+    public UpsertIntegrationCommandValidator(ISsrfGuard ssrf)
     {
         RuleFor(x => x.ProjectId).NotEmpty();
         RuleFor(x => x.Type).IsInEnum();
         RuleFor(x => x.BaseUrl).NotEmpty().Must(url => Uri.TryCreate(url, UriKind.Absolute, out _))
             .WithMessage("La URL base no es válida.");
+        // SonarQube / ZAP usan BaseUrl para HTTP saliente controlado por el proyecto.
+        When(x => x.Type is IntegrationType.SonarQube or IntegrationType.OwaspZap, () =>
+            RuleFor(x => x.BaseUrl).Custom((url, ctx) =>
+            {
+                var check = ssrf.ValidateOutboundUri(url);
+                if (!check.IsSuccess)
+                    ctx.AddFailure(check.Error ?? "La URL base fue rechazada por política SSRF.");
+            }));
     }
 }
 
@@ -193,18 +217,24 @@ public class UpsertIntegrationCommandHandler : IRequestHandler<UpsertIntegration
 {
     private readonly IRepository<IntegrationSetting> _settings;
     private readonly ITokenEncryptionService _encryption;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public UpsertIntegrationCommandHandler(IRepository<IntegrationSetting> settings,
-        ITokenEncryptionService encryption, IUnitOfWork uow)
+    public UpsertIntegrationCommandHandler(
+        IRepository<IntegrationSetting> settings,
+        ITokenEncryptionService encryption,
+        IProjectAccessService access,
+        IUnitOfWork uow)
     {
         _settings = settings;
         _encryption = encryption;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<Guid>> Handle(UpsertIntegrationCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var encryptedToken = string.IsNullOrEmpty(request.Token) ? null : _encryption.Encrypt(request.Token);
         var existing = (await _settings.ListAsync(
             s => s.ProjectId == request.ProjectId && s.Type == request.Type, ct)).FirstOrDefault();

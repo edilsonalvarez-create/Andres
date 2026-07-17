@@ -89,6 +89,12 @@ auditoría (`CreatedAt/By`, `UpdatedAt/By`) y borrado lógico (`IsDeleted`).
 | 5 | IA vía puerto `IAiAnalysisService` con fallback heurístico | La plataforma nunca depende de disponibilidad del LLM |
 | 6 | SQLite + Hangfire en memoria en Development/Testing | Onboarding y CI sin infraestructura |
 | 7 | Corrección global Modified→Added en `ChangeTracker.Tracked` | Entidades DDD generan su Guid en el constructor; evita `DbUpdateConcurrencyException` en hijos de agregados |
+| 8 | [`RunReportGenerator` dividido por familia de reporte, no por formato](Architecture/adr/ADR-008-extract-report-writers.md) | Ejecución/dashboard/matriz no comparten lógica de negocio; dividir por formato habría sido una abstracción especulativa |
+| 9 | [`TestRunnerFactory` resuelve por diccionario inyectado (`IEnumerable<ITestRunner>`)](Architecture/adr/ADR-009-testrunnerfactory-di-lookup.md) | Elimina el `switch` + Service Locator; agregar un runner nuevo no requiere tocar la fábrica (OCP) |
+| 10 | [`useParsedYamlConfig` aplicado solo a 2 de 5 formularios de automatización](Architecture/adr/ADR-010-scoped-hook-extraction.md) | Los otros 3 tienen diferencias de comportamiento reales; forzarlos habría creado una abstracción más compleja que el duplicado que reemplaza |
+
+Detalle completo de la auditoría de deuda técnica que originó las decisiones 8-10:
+[Technical-Debt-Audit.md](Architecture/Technical-Debt-Audit.md).
 
 ## 6. Seguridad (OWASP Top 10 / ISO 27001)
 
@@ -114,4 +120,6 @@ auditoría (`CreatedAt/By`, `UpdatedAt/By`) y borrado lógico (`IsDeleted`).
 - **Almacenamiento de evidencias en la nube**: reemplazar `FileEvidenceStorage`
   por una implementación S3/Azure Blob del mismo puerto `IEvidenceStorage`.
 - Escalado horizontal: API stateless (JWT), Hangfire distribuye jobs entre nodos,
-  Redis comparte caché; SignalR requiere backplane Redis si hay múltiples réplicas.
+  Redis comparte caché y actúa como **backplane SignalR** cuando
+  `ConnectionStrings:Redis` está configurado (obligatorio con ≥2 réplicas para
+  progreso de ejecuciones consistente).

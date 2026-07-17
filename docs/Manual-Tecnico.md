@@ -30,16 +30,25 @@ Swagger UI en `/swagger` (ambiente Development). Versionado por segmento de URL
 
 ### Tiempo real (SignalR)
 
-Hub: `/hubs/testruns` (JWT por query `access_token`). Métodos cliente→servidor:
-`SubscribeToRun(runId)`, `UnsubscribeFromRun(runId)`. Eventos servidor→cliente:
-`runStatusChanged {testRunId, status}`, `runCompleted {testRunId, passed, failed, gateStatus}`.
+Hub: `/hubs/testruns`. Autenticación: **Authorization Bearer** vía `accessTokenFactory`
+(negotiate / LongPolling). En **Production** el cliente usa LongPolling (el handshake
+WebSocket del navegador no admite cabecera Authorization) y el API **rechaza**
+`?access_token=` en query. En Development el query token aún se acepta con warning en log.
+
+Métodos cliente→servidor: `SubscribeToRun(runId)`, `UnsubscribeFromRun(runId)`.
+Eventos servidor→cliente: `runStatusChanged {testRunId, status}`,
+`runCompleted {testRunId, passed, failed, gateStatus}`.
+
+**Multi-réplica:** configurar `ConnectionStrings:Redis`. Con Redis definido, SignalR usa
+backplane `AddStackExchangeRedis` (canal `qaguardian-signalr`). Sin Redis y ≥2 réplicas,
+el progreso en tiempo real será inconsistente (cada nodo solo notifica a sus clientes).
 
 ## 2. Configuración (appsettings / variables de entorno)
 
 | Clave | Descripción |
 |---|---|
 | `ConnectionStrings:DefaultConnection` | SQL Server (o archivo SQLite si `Database:UseSqlite=true`) |
-| `ConnectionStrings:Redis` | Vacío = caché en memoria |
+| `ConnectionStrings:Redis` | Caché distribuida + **backplane SignalR** (obligatorio con ≥2 réplicas API). Vacío en Dev = memoria local / SignalR in-proc |
 | `Jwt:SigningKey/Issuer/Audience/AccessTokenMinutes/RefreshTokenDays` | Emisión y validación JWT local |
 | `Oidc:Authority/Audience/RequireHttpsMetadata` | **OAuth2/OpenID Connect**: al configurar `Authority` (p. ej. `https://login.microsoftonline.com/{tenant}/v2.0` para Entra ID, o la URL de Keycloak/Google), los tokens del proveedor se validan por *discovery* en un segundo esquema. El esquema se elige por el emisor del token; el usuario debe estar **aprovisionado** en QA Guardian (mismo correo) y sus roles RBAC se toman de la base local |
 | `Security:EncryptionKey` | AES-256 para tokens de integraciones en reposo |

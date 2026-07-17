@@ -1,6 +1,7 @@
 using FluentValidation;
 using MediatR;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Application.Common.Models;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
@@ -82,17 +83,22 @@ public class AssignGateToProjectCommandHandler : IRequestHandler<AssignGateToPro
 {
     private readonly IProjectRepository _projects;
     private readonly IQualityGateRepository _gates;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public AssignGateToProjectCommandHandler(IProjectRepository projects, IQualityGateRepository gates, IUnitOfWork uow)
+    public AssignGateToProjectCommandHandler(
+        IProjectRepository projects, IQualityGateRepository gates,
+        IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
         _gates = gates;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<bool>> Handle(AssignGateToProjectCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
         _ = await _gates.GetByIdAsync(request.QualityGateId, ct)

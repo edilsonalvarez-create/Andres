@@ -119,6 +119,36 @@ public class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenCommand, R
     }
 }
 
+// ─────────────────────────────── Logout ───────────────────────────────
+
+/// <summary>Revoca un refresh token (logout explícito). Idempotente: si el token ya no existe
+/// o ya estaba revocado, se considera éxito (no hay nada que filtrar a un cliente sin sesión).</summary>
+public record LogoutCommand(string RefreshToken) : IRequest<Result<bool>>;
+
+public class LogoutCommandHandler : IRequestHandler<LogoutCommand, Result<bool>>
+{
+    private readonly IUserRepository _users;
+    private readonly IUnitOfWork _uow;
+
+    public LogoutCommandHandler(IUserRepository users, IUnitOfWork uow)
+    {
+        _users = users;
+        _uow = uow;
+    }
+
+    public async Task<Result<bool>> Handle(LogoutCommand request, CancellationToken ct)
+    {
+        var user = await _users.GetByRefreshTokenAsync(request.RefreshToken, ct);
+        var token = user?.RefreshTokens.FirstOrDefault(t => t.Token == request.RefreshToken);
+        if (token is { IsActive: true })
+        {
+            token.Revoke();
+            await _uow.SaveChangesAsync(ct);
+        }
+        return Result<bool>.Success(true);
+    }
+}
+
 // ─────────────────────────── Registrar usuario ───────────────────────────
 
 public record RegisterUserCommand(string Email, string FullName, string Password, List<string> Roles)
@@ -172,5 +202,58 @@ public class RegisterUserCommandHandler : IRequestHandler<RegisterUserCommand, R
         await _users.AddAsync(user, ct);
         await _uow.SaveChangesAsync(ct);
         return Result<Guid>.Success(user.Id);
+    }
+}
+
+// ─────────────────────────── Cambiar contraseña (autoservicio) ───────────────────────────
+
+public record ChangePasswordCommand(string CurrentPassword, string NewPassword) : IRequest<Result<bool>>;
+
+public class ChangePasswordCommandValidator : AbstractValidator<ChangePasswordCommand>
+{
+    public ChangePasswordCommandValidator()
+    {
+        RuleFor(x => x.CurrentPassword).NotEmpty();
+        // Misma política OWASP que el registro de usuarios.
+        RuleFor(x => x.NewPassword).NotEmpty().MinimumLength(10)
+            .Matches("[A-Z]").WithMessage("La nueva contraseña debe contener al menos una mayúscula.")
+            .Matches("[a-z]").WithMessage("La nueva contraseña debe contener al menos una minúscula.")
+            .Matches("[0-9]").WithMessage("La nueva contraseña debe contener al menos un dígito.")
+            .NotEqual(x => x.CurrentPassword).WithMessage("La nueva contraseña debe ser distinta de la actual.");
+    }
+}
+
+public class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordCommand, Result<bool>>
+{
+    private readonly IUserRepository _users;
+    private readonly IPasswordHasher _hasher;
+    private readonly ICurrentUserService _currentUser;
+    private readonly IUnitOfWork _uow;
+
+    public ChangePasswordCommandHandler(IUserRepository users, IPasswordHasher hasher,
+        ICurrentUserService currentUser, IUnitOfWork uow)
+    {
+        _users = users;
+        _hasher = hasher;
+        _currentUser = currentUser;
+        _uow = uow;
+    }
+
+    public async Task<Result<bool>> Handle(ChangePasswordCommand request, CancellationToken ct)
+    {
+        // El usuario solo puede cambiar su propia contraseña (id tomado del token, no del cuerpo).
+        if (_currentUser.UserId is not { } userId)
+            return Result<bool>.Failure("No hay una sesión activa.");
+
+        var user = await _users.GetByIdAsync(userId, ct);
+        if (user is null)
+            return Result<bool>.Failure("Usuario no encontrado.");
+
+        if (!_hasher.Verify(request.CurrentPassword, user.PasswordHash))
+            return Result<bool>.Failure("La contraseña actual no es correcta.");
+
+        user.ChangePassword(_hasher.Hash(request.NewPassword));
+        await _uow.SaveChangesAsync(ct);
+        return Result<bool>.Success(true);
     }
 }

@@ -1,5 +1,6 @@
 using MediatR;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
 using QAGuardian.Domain.Enums;
@@ -31,13 +32,14 @@ public record RequirementsCoverageDto(
 public record GetRequirementsCoverageQuery(Guid ProjectId) : IRequest<RequirementsCoverageDto>;
 
 /// <summary>
-/// Matriz de trazabilidad Req → Historia → Caso → Último resultado → Defectos abiertos.
-/// Cierra el gap enterprise vs Xray/qTest/TestRail sobre el catálogo existente.
+/// Matriz de trazabilidad Req → Historia → Caso → Último resultado → Defectos abiertos
+/// sobre el catálogo interno (módulos / requerimientos / historias / casos).
 /// </summary>
 public class GetRequirementsCoverageQueryHandler
     : IRequestHandler<GetRequirementsCoverageQuery, RequirementsCoverageDto>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly IRepository<Module> _modules;
     private readonly IRepository<Requirement> _requirements;
     private readonly IRepository<UserStory> _stories;
@@ -47,6 +49,7 @@ public class GetRequirementsCoverageQueryHandler
 
     public GetRequirementsCoverageQueryHandler(
         IProjectRepository projects,
+        IProjectAccessService access,
         IRepository<Module> modules,
         IRepository<Requirement> requirements,
         IRepository<UserStory> stories,
@@ -55,6 +58,7 @@ public class GetRequirementsCoverageQueryHandler
         IDefectRepository defects)
     {
         _projects = projects;
+        _access = access;
         _modules = modules;
         _requirements = requirements;
         _stories = stories;
@@ -66,6 +70,7 @@ public class GetRequirementsCoverageQueryHandler
     public async Task<RequirementsCoverageDto> Handle(
         GetRequirementsCoverageQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 

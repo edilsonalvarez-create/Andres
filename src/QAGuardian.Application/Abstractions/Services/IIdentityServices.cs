@@ -27,9 +27,22 @@ public interface IPasswordHasher
     bool Verify(string password, string hash);
 }
 
-/// <summary>Cifrado simétrico para secretos en reposo (tokens de integraciones).</summary>
+/// <summary>Cifrado simétrico para secretos en reposo (tokens de integraciones / conn strings).</summary>
 public interface ITokenEncryptionService
 {
     string Encrypt(string plainText);
     string Decrypt(string cipherText);
+}
+
+/// <summary>
+/// Resuelve connection strings de entornos nombrados solo en Infrastructure (Sprint 12).
+/// Nunca expone el secreto al cliente ni lo serializa en Hangfire.
+/// </summary>
+public interface IProjectDatabaseConnectionResolver
+{
+    /// <summary>Obtiene la connection string en claro para ejecutar validación de esquema.</summary>
+    Task<string> ResolveAsync(Guid projectId, string environmentName, CancellationToken ct = default);
+
+    /// <summary>True si el entorno existe (BD cifrada o configuración server-side).</summary>
+    Task<bool> ExistsAsync(Guid projectId, string environmentName, CancellationToken ct = default);
 }

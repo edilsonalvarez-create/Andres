@@ -24,12 +24,20 @@ public class JwtTokenService : IJwtTokenService
 {
     private readonly JwtOptions _options;
 
+    /// <summary>Mínimo de 256 bits (32 bytes UTF-8) requerido por HS256 (RFC 7518 §3.2; OWASP A02:2025).</summary>
+    private const int MinSigningKeyBytes = 32;
+
     public JwtTokenService(IConfiguration configuration)
     {
         _options = configuration.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOptions();
         if (string.IsNullOrWhiteSpace(_options.SigningKey))
             throw new InvalidOperationException(
                 "Jwt:SigningKey no está configurada. Defina una clave de al menos 32 caracteres.");
+        if (Encoding.UTF8.GetByteCount(_options.SigningKey) < MinSigningKeyBytes)
+            throw new InvalidOperationException(
+                $"Jwt:SigningKey es demasiado corta ({Encoding.UTF8.GetByteCount(_options.SigningKey)} bytes). " +
+                $"HS256 requiere una clave de al menos {MinSigningKeyBytes} bytes (256 bits) para resistir " +
+                "ataques de fuerza bruta contra la firma.");
     }
 
     public int AccessTokenMinutes => _options.AccessTokenMinutes;
@@ -73,9 +81,18 @@ public class BcryptPasswordHasher : IPasswordHasher
     public bool Verify(string password, string hash) => BCrypt.Net.BCrypt.Verify(password, hash);
 }
 
-/// <summary>Cifrado AES-256 para secretos de integraciones en reposo.</summary>
+/// <summary>
+/// Cifrado autenticado AES-256-GCM para secretos de integraciones en reposo (OWASP A02:2025).
+/// Reemplaza un esquema previo de AES-CBC sin autenticación (vulnerable a padding oracle y
+/// bit-flipping): GCM aporta confidencialidad e integridad en una sola operación. El formato de
+/// salida (nonce‖tag‖ciphertext) es incompatible con el anterior: tras desplegar esta versión,
+/// los tokens de integraciones ya guardados deben volver a configurarse una vez (ver runbook).
+/// </summary>
 public class AesTokenEncryptionService : ITokenEncryptionService
 {
+    private const int NonceSizeBytes = 12; // 96 bits, tamaño recomendado por NIST SP 800-38D
+    private const int TagSizeBytes = 16;   // 128 bits
+
     private readonly byte[] _key;
 
     public AesTokenEncryptionService(IConfiguration configuration)
@@ -87,28 +104,35 @@ public class AesTokenEncryptionService : ITokenEncryptionService
 
     public string Encrypt(string plainText)
     {
-        using var aes = Aes.Create();
-        aes.Key = _key;
-        aes.GenerateIV();
-        using var encryptor = aes.CreateEncryptor();
         var plainBytes = Encoding.UTF8.GetBytes(plainText);
-        var cipherBytes = encryptor.TransformFinalBlock(plainBytes, 0, plainBytes.Length);
-        var result = new byte[aes.IV.Length + cipherBytes.Length];
-        Buffer.BlockCopy(aes.IV, 0, result, 0, aes.IV.Length);
-        Buffer.BlockCopy(cipherBytes, 0, result, aes.IV.Length, cipherBytes.Length);
+        var nonce = RandomNumberGenerator.GetBytes(NonceSizeBytes);
+        var cipherBytes = new byte[plainBytes.Length];
+        var tag = new byte[TagSizeBytes];
+
+        using var gcm = new AesGcm(_key, TagSizeBytes);
+        gcm.Encrypt(nonce, plainBytes, cipherBytes, tag);
+
+        var result = new byte[nonce.Length + tag.Length + cipherBytes.Length];
+        Buffer.BlockCopy(nonce, 0, result, 0, nonce.Length);
+        Buffer.BlockCopy(tag, 0, result, nonce.Length, tag.Length);
+        Buffer.BlockCopy(cipherBytes, 0, result, nonce.Length + tag.Length, cipherBytes.Length);
         return Convert.ToBase64String(result);
     }
 
     public string Decrypt(string cipherText)
     {
         var data = Convert.FromBase64String(cipherText);
-        using var aes = Aes.Create();
-        aes.Key = _key;
-        var iv = new byte[16];
-        Buffer.BlockCopy(data, 0, iv, 0, 16);
-        aes.IV = iv;
-        using var decryptor = aes.CreateDecryptor();
-        var plainBytes = decryptor.TransformFinalBlock(data, 16, data.Length - 16);
+        if (data.Length < NonceSizeBytes + TagSizeBytes)
+            throw new CryptographicException("Texto cifrado inválido o truncado.");
+
+        var nonce = data.AsSpan(0, NonceSizeBytes);
+        var tag = data.AsSpan(NonceSizeBytes, TagSizeBytes);
+        var cipherBytes = data.AsSpan(NonceSizeBytes + TagSizeBytes);
+        var plainBytes = new byte[cipherBytes.Length];
+
+        using var gcm = new AesGcm(_key, TagSizeBytes);
+        gcm.Decrypt(nonce, cipherBytes, tag, plainBytes);
+
         return Encoding.UTF8.GetString(plainBytes);
     }
 }

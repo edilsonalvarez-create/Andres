@@ -9,6 +9,8 @@ public class DomainException : Exception
 /// <summary>Recurso no encontrado.</summary>
 public class NotFoundException : Exception
 {
+    public NotFoundException(string message) : base(message) { }
+
     public NotFoundException(string entity, object key)
         : base($"{entity} con identificador '{key}' no fue encontrado.") { }
 }

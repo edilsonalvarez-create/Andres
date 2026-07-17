@@ -22,6 +22,28 @@ public class AdministrationController : ApiControllerBase
     public async Task<IActionResult> UpdateRoles(Guid id, [FromBody] List<string> roles, CancellationToken ct)
         => FromResult(await Mediator.Send(new UpdateUserRolesCommand(id, roles), ct));
 
+    /// <summary>Restablece (asigna) la contraseña de un usuario. Las contraseñas no se pueden ver: solo reemplazar.</summary>
+    [HttpPost("users/{id:guid}/reset-password")]
+    [Authorize(Policy = Policies.Administer)]
+    public async Task<IActionResult> ResetPassword(Guid id, [FromBody] AdminResetPasswordCommand command, CancellationToken ct)
+        => id != command.UserId
+            ? BadRequest(new { error = "El identificador de la ruta no coincide con el cuerpo." })
+            : FromResult(await Mediator.Send(command, ct));
+
+    /// <summary>Activa o desactiva un usuario.</summary>
+    [HttpPut("users/{id:guid}/active")]
+    [Authorize(Policy = Policies.Administer)]
+    public async Task<IActionResult> SetActive(Guid id, [FromBody] SetUserActiveCommand command, CancellationToken ct)
+        => id != command.UserId
+            ? BadRequest(new { error = "El identificador de la ruta no coincide con el cuerpo." })
+            : FromResult(await Mediator.Send(command, ct));
+
+    /// <summary>Elimina (lógicamente) un usuario.</summary>
+    [HttpDelete("users/{id:guid}")]
+    [Authorize(Policy = Policies.Administer)]
+    public async Task<IActionResult> DeleteUser(Guid id, CancellationToken ct)
+        => FromResult(await Mediator.Send(new DeleteUserCommand(id), ct));
+
     /// <summary>Lista los canales de notificación configurados.</summary>
     [HttpGet("notification-channels")]
     [Authorize(Policy = Policies.ManageProjects)]

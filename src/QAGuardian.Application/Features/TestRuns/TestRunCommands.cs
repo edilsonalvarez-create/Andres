@@ -59,15 +59,18 @@ public class StartTestRunCommandHandler : IRequestHandler<StartTestRunCommand, R
 {
     private readonly ITestRunRepository _runs;
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly ICurrentUserService _currentUser;
     private readonly IBackgroundJobScheduler _scheduler;
     private readonly IUnitOfWork _uow;
 
     public StartTestRunCommandHandler(ITestRunRepository runs, IProjectRepository projects,
-        ICurrentUserService currentUser, IBackgroundJobScheduler scheduler, IUnitOfWork uow)
+        IProjectAccessService access, ICurrentUserService currentUser,
+        IBackgroundJobScheduler scheduler, IUnitOfWork uow)
     {
         _runs = runs;
         _projects = projects;
+        _access = access;
         _currentUser = currentUser;
         _scheduler = scheduler;
         _uow = uow;
@@ -75,6 +78,7 @@ public class StartTestRunCommandHandler : IRequestHandler<StartTestRunCommand, R
 
     public async Task<Result<TestRunDto>> Handle(StartTestRunCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
         if (!project.IsActive)
@@ -320,7 +324,8 @@ public class ExecuteTestRunCommandHandler : IRequestHandler<ExecuteTestRunComman
                 await _analyses.AddAsync(new AiAnalysis(
                     failure.Id, null, diagnosis.Diagnosis, diagnosis.ProbableCause,
                     diagnosis.Criticality, diagnosis.Recommendation, diagnosis.SuggestedPriority,
-                    diagnosis.EstimatedHours, diagnosis.SuggestedOwnerRole, modelLabel), ct);
+                    diagnosis.EstimatedHours, diagnosis.SuggestedOwnerRole, modelLabel,
+                    diagnosis.Confidence, diagnosis.EvidenceQuote), ct);
 
                 // Auto-defecto solo con criticidad alta + confianza suficiente (anti-alucinación).
                 if (diagnosis.ShouldAutoCreateDefect())
@@ -453,16 +458,19 @@ public record CancelTestRunCommand(Guid TestRunId) : IRequest<Result<bool>>;
 public class CancelTestRunCommandHandler : IRequestHandler<CancelTestRunCommand, Result<bool>>
 {
     private readonly ITestRunRepository _runs;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public CancelTestRunCommandHandler(ITestRunRepository runs, IUnitOfWork uow)
+    public CancelTestRunCommandHandler(ITestRunRepository runs, IProjectAccessService access, IUnitOfWork uow)
     {
         _runs = runs;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<bool>> Handle(CancelTestRunCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessTestRunAsync(request.TestRunId, ct);
         var run = await _runs.GetByIdAsync(request.TestRunId, ct)
             ?? throw new NotFoundException(nameof(TestRun), request.TestRunId);
         run.Cancel();
@@ -478,16 +486,36 @@ public record GetTestRunsQuery(Guid ProjectId, int Page = 1, int PageSize = 20) 
 public class GetTestRunsQueryHandler : IRequestHandler<GetTestRunsQuery, PagedResult<TestRunDto>>
 {
     private readonly ITestRunRepository _runs;
+    private readonly IProjectAccessService _access;
 
-    public GetTestRunsQueryHandler(ITestRunRepository runs) => _runs = runs;
+    public GetTestRunsQueryHandler(ITestRunRepository runs, IProjectAccessService access)
+    {
+        _runs = runs;
+        _access = access;
+    }
 
     public async Task<PagedResult<TestRunDto>> Handle(GetTestRunsQuery request, CancellationToken ct)
     {
-        var (items, total) = await _runs.PagedWithDetailsAsync(
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
+        var (items, total) = await _runs.PagedSummaryAsync(
             request.Page, request.PageSize, request.ProjectId, ct);
         return new PagedResult<TestRunDto>(
-            items.Select(r => r.ToDto()).ToList(),
+            items.Select(ToDto).ToList(),
             total, request.Page, request.PageSize);
+    }
+
+    private static TestRunDto ToDto(TestRunListSummary s)
+    {
+        var duration = s.StartedAt.HasValue && s.CompletedAt.HasValue
+            ? (double?)(s.CompletedAt.Value - s.StartedAt.Value).TotalSeconds
+            : null;
+        var passRate = s.TotalTests == 0 ? 0 : Math.Round(s.Passed * 100m / s.TotalTests, 2);
+        return new TestRunDto(
+            s.Id, s.ProjectId, s.RunType, s.Environment, s.Status,
+            s.TriggeredBy, s.CommitSha, s.PullRequestNumber,
+            s.StartedAt, s.CompletedAt, duration,
+            s.TotalTests, s.Passed, s.Failed, s.Skipped, passRate,
+            s.GateStatus?.ToString(), s.DeploymentApproved, s.ErrorMessage);
     }
 }
 
@@ -497,12 +525,18 @@ public class GetTestRunDetailQueryHandler
     : IRequestHandler<GetTestRunDetailQuery, (TestRunDto Run, IReadOnlyList<TestResultDto> Results)>
 {
     private readonly ITestRunRepository _runs;
+    private readonly IProjectAccessService _access;
 
-    public GetTestRunDetailQueryHandler(ITestRunRepository runs) => _runs = runs;
+    public GetTestRunDetailQueryHandler(ITestRunRepository runs, IProjectAccessService access)
+    {
+        _runs = runs;
+        _access = access;
+    }
 
     public async Task<(TestRunDto, IReadOnlyList<TestResultDto>)> Handle(
         GetTestRunDetailQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessTestRunAsync(request.Id, ct);
         var run = await _runs.GetWithResultsAsync(request.Id, ct)
             ?? throw new NotFoundException(nameof(TestRun), request.Id);
         return (run.ToDto(), run.Results.Select(r => r.ToDto()).ToList());

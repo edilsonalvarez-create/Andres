@@ -1,9 +1,11 @@
 using FluentValidation;
 using MediatR;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Application.Common.Models;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
+using QAGuardian.Domain.Enums;
 
 namespace QAGuardian.Application.Features.Projects;
 
@@ -41,12 +43,21 @@ public class CreateProjectCommandHandler : IRequestHandler<CreateProjectCommand,
 {
     private readonly IProjectRepository _projects;
     private readonly IQualityGateRepository _gates;
+    private readonly IProjectMemberRepository _members;
+    private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _uow;
 
-    public CreateProjectCommandHandler(IProjectRepository projects, IQualityGateRepository gates, IUnitOfWork uow)
+    public CreateProjectCommandHandler(
+        IProjectRepository projects,
+        IQualityGateRepository gates,
+        IProjectMemberRepository members,
+        ICurrentUserService currentUser,
+        IUnitOfWork uow)
     {
         _projects = projects;
         _gates = gates;
+        _members = members;
+        _currentUser = currentUser;
         _uow = uow;
     }
 
@@ -63,6 +74,14 @@ public class CreateProjectCommandHandler : IRequestHandler<CreateProjectCommand,
             project.AssignQualityGate(defaultGate.Id);
 
         await _projects.AddAsync(project, ct);
+
+        // Creador queda como ProjectAdmin para no perder acceso tras el seed de boot.
+        if (_currentUser.UserId is Guid userId)
+        {
+            await _members.AddAsync(
+                new ProjectMember(project.Id, userId, RoleInProject.ProjectAdmin), ct);
+        }
+
         await _uow.SaveChangesAsync(ct);
         return Result<ProjectDto>.Success(project.ToDto());
     }
@@ -85,16 +104,20 @@ public class UpdateProjectCommandValidator : AbstractValidator<UpdateProjectComm
 public class UpdateProjectCommandHandler : IRequestHandler<UpdateProjectCommand, Result<ProjectDto>>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public UpdateProjectCommandHandler(IProjectRepository projects, IUnitOfWork uow)
+    public UpdateProjectCommandHandler(
+        IProjectRepository projects, IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<ProjectDto>> Handle(UpdateProjectCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.Id, ct);
         var project = await _projects.GetByIdAsync(request.Id, ct)
             ?? throw new NotFoundException(nameof(Project), request.Id);
         project.Update(request.Name, request.Description, request.RepositoryUrl);
@@ -110,16 +133,20 @@ public record DeleteProjectCommand(Guid Id) : IRequest<Result<bool>>;
 public class DeleteProjectCommandHandler : IRequestHandler<DeleteProjectCommand, Result<bool>>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public DeleteProjectCommandHandler(IProjectRepository projects, IUnitOfWork uow)
+    public DeleteProjectCommandHandler(
+        IProjectRepository projects, IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<bool>> Handle(DeleteProjectCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.Id, ct);
         var project = await _projects.GetByIdAsync(request.Id, ct)
             ?? throw new NotFoundException(nameof(Project), request.Id);
         project.IsDeleted = true;
@@ -145,16 +172,20 @@ public class AddModuleCommandValidator : AbstractValidator<AddModuleCommand>
 public class AddModuleCommandHandler : IRequestHandler<AddModuleCommand, Result<ModuleDto>>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public AddModuleCommandHandler(IProjectRepository projects, IUnitOfWork uow)
+    public AddModuleCommandHandler(
+        IProjectRepository projects, IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<ModuleDto>> Handle(AddModuleCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetWithModulesAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
         var module = project.AddModule(request.Name, request.Description);
@@ -171,15 +202,26 @@ public record GetProjectsQuery(int Page = 1, int PageSize = 20, string? Search =
 public class GetProjectsQueryHandler : IRequestHandler<GetProjectsQuery, PagedResult<ProjectDto>>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
 
-    public GetProjectsQueryHandler(IProjectRepository projects) => _projects = projects;
+    public GetProjectsQueryHandler(IProjectRepository projects, IProjectAccessService access)
+    {
+        _projects = projects;
+        _access = access;
+    }
 
     public async Task<PagedResult<ProjectDto>> Handle(GetProjectsQuery request, CancellationToken ct)
     {
+        var accessible = (await _access.ListAccessibleProjectIdsAsync(ct)).ToHashSet();
+        if (accessible.Count == 0)
+            return new PagedResult<ProjectDto>([], 0, request.Page, request.PageSize);
+
         var search = request.Search?.Trim();
         var (items, total) = await _projects.PagedAsync(
             request.Page, request.PageSize,
-            p => !p.IsDeleted && (string.IsNullOrEmpty(search) || p.Name.Contains(search) || p.Code.Contains(search)),
+            p => !p.IsDeleted
+                 && accessible.Contains(p.Id)
+                 && (string.IsNullOrEmpty(search) || p.Name.Contains(search) || p.Code.Contains(search)),
             ct);
         return new PagedResult<ProjectDto>(items.Select(p => p.ToDto()).ToList(), total, request.Page, request.PageSize);
     }
@@ -190,11 +232,17 @@ public record GetProjectByIdQuery(Guid Id) : IRequest<ProjectDto>;
 public class GetProjectByIdQueryHandler : IRequestHandler<GetProjectByIdQuery, ProjectDto>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
 
-    public GetProjectByIdQueryHandler(IProjectRepository projects) => _projects = projects;
+    public GetProjectByIdQueryHandler(IProjectRepository projects, IProjectAccessService access)
+    {
+        _projects = projects;
+        _access = access;
+    }
 
     public async Task<ProjectDto> Handle(GetProjectByIdQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.Id, ct);
         var project = await _projects.GetWithModulesAsync(request.Id, ct)
             ?? throw new NotFoundException(nameof(Project), request.Id);
         return project.ToDto();

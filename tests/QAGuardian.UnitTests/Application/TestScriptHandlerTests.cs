@@ -16,10 +16,14 @@ public class TestScriptHandlerTests
     private readonly IProjectRepository _projects = Substitute.For<IProjectRepository>();
     private readonly ITestCaseRepository _testCases = Substitute.For<ITestCaseRepository>();
     private readonly IEvidenceStorage _storage = Substitute.For<IEvidenceStorage>();
+    private readonly IProjectAccessService _access = Substitute.For<IProjectAccessService>();
     private readonly IUnitOfWork _uow = Substitute.For<IUnitOfWork>();
 
     public TestScriptHandlerTests()
     {
+        _access.CanAccessProjectAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(true);
+        _access.EnsureCanAccessProjectAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
         _projects.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
             .Returns(new Project("WEB", "Portal Web", null, null));
         _storage.SaveAsync(Arg.Any<string>(), Arg.Any<Stream>(), Arg.Any<CancellationToken>())
@@ -32,7 +36,7 @@ public class TestScriptHandlerTests
     [Fact]
     public async Task Guardar_script_nuevo_crea_caso_de_prueba_automatizado()
     {
-        var handler = new SaveTestScriptCommandHandler(_projects, _testCases, _storage, _uow);
+        var handler = new SaveTestScriptCommandHandler(_projects, _testCases, _storage, _access, _uow);
         var spec = "import { test } from '@playwright/test';\ntest('login', async ({ page }) => {});";
 
         var result = await handler.Handle(new SaveTestScriptCommand(
@@ -52,7 +56,7 @@ public class TestScriptHandlerTests
     {
         var existing = new TestCase(Guid.NewGuid(), "TC-0001", "Login", TestType.Functional, TestPriority.High);
         _testCases.GetByIdAsync(existing.Id, Arg.Any<CancellationToken>()).Returns(existing);
-        var handler = new SaveTestScriptCommandHandler(_projects, _testCases, _storage, _uow);
+        var handler = new SaveTestScriptCommandHandler(_projects, _testCases, _storage, _access, _uow);
 
         var result = await handler.Handle(new SaveTestScriptCommand(
             existing.ProjectId, existing.Id, "Login actualizado", AutomationFramework.Playwright,
@@ -73,7 +77,7 @@ public class TestScriptHandlerTests
         _storage.OpenReadAsync("scripts/x/login.spec.ts", Arg.Any<CancellationToken>())
             .Returns(new MemoryStream(Encoding.UTF8.GetBytes("contenido de la spec")));
 
-        var handler = new GetTestScriptQueryHandler(_testCases, _storage);
+        var handler = new GetTestScriptQueryHandler(_testCases, _storage, _access);
         var dto = await handler.Handle(new GetTestScriptQuery(testCase.Id), default);
 
         dto.Content.Should().Be("contenido de la spec");
@@ -85,7 +89,7 @@ public class TestScriptHandlerTests
     {
         var testCase = new TestCase(Guid.NewGuid(), "TC-0001", "Manual", TestType.Functional, TestPriority.Medium);
         _testCases.GetByIdAsync(testCase.Id, Arg.Any<CancellationToken>()).Returns(testCase);
-        var handler = new GetTestScriptQueryHandler(_testCases, _storage);
+        var handler = new GetTestScriptQueryHandler(_testCases, _storage, _access);
 
         var act = () => handler.Handle(new GetTestScriptQuery(testCase.Id), default);
         await act.Should().ThrowAsync<DomainException>();

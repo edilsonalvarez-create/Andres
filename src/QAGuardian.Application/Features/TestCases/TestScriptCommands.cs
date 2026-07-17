@@ -46,19 +46,22 @@ public class SaveTestScriptCommandHandler : IRequestHandler<SaveTestScriptComman
     private readonly IProjectRepository _projects;
     private readonly ITestCaseRepository _testCases;
     private readonly IEvidenceStorage _storage;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
     public SaveTestScriptCommandHandler(IProjectRepository projects, ITestCaseRepository testCases,
-        IEvidenceStorage storage, IUnitOfWork uow)
+        IEvidenceStorage storage, IProjectAccessService access, IUnitOfWork uow)
     {
         _projects = projects;
         _testCases = testCases;
         _storage = storage;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<TestScriptDto>> Handle(SaveTestScriptCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 
@@ -67,6 +70,7 @@ public class SaveTestScriptCommandHandler : IRequestHandler<SaveTestScriptComman
             AutomationFramework.Playwright => ".spec.ts",
             AutomationFramework.Postman => ".postman_collection.json",
             AutomationFramework.JMeter => ".jmx",
+            AutomationFramework.SeleniumIde => ".side",
             _ => ".txt"
         };
         var safeName = Sanitize(request.Name);
@@ -122,34 +126,61 @@ public class GetTestScriptQueryHandler : IRequestHandler<GetTestScriptQuery, Tes
 {
     private readonly ITestCaseRepository _testCases;
     private readonly IEvidenceStorage _storage;
+    private readonly IProjectAccessService _access;
 
-    public GetTestScriptQueryHandler(ITestCaseRepository testCases, IEvidenceStorage storage)
+    public GetTestScriptQueryHandler(
+        ITestCaseRepository testCases, IEvidenceStorage storage, IProjectAccessService access)
     {
         _testCases = testCases;
         _storage = storage;
+        _access = access;
     }
 
     public async Task<TestScriptDto> Handle(GetTestScriptQuery request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetByIdAsync(request.TestCaseId, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.TestCaseId);
+        var testCase = await _testCases.GetByIdAsync(request.TestCaseId, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.TestCaseId);
         if (testCase.AutomationScriptPath is null)
             throw new DomainException("El caso de prueba no tiene un script automatizado asociado.");
 
-        var content = "";
-        try
-        {
-            await using var stream = await _storage.OpenReadAsync(testCase.AutomationScriptPath, ct);
-            using var reader = new StreamReader(stream);
-            content = await reader.ReadToEndAsync(ct);
-        }
-        catch (FileNotFoundException)
-        {
-            // El script fue movido o eliminado del almacenamiento; se devuelve vacío para poder recrearlo.
-        }
+        var path = testCase.AutomationScriptPath;
+        var content = await LoadScriptContentAsync(testCase, path, ct);
 
         return new TestScriptDto(testCase.Id, testCase.Code, testCase.Title, testCase.Framework,
-            testCase.Type, testCase.AutomationScriptPath, content);
+            testCase.Type, path, content);
+    }
+
+    /// <summary>
+    /// Devuelve el contenido editable del script. Si el "script" es en realidad una URL objetivo
+    /// (casos visuales) o un archivo externo al almacenamiento gestionado (p. ej. un .jmx en disco),
+    /// devuelve una observación explicativa en lugar de un cuadro vacío.
+    /// </summary>
+    private async Task<string> LoadScriptContentAsync(TestCase testCase, string path, CancellationToken ct)
+    {
+        if (Uri.TryCreate(path, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return $"// Este caso ({testCase.Framework}) no tiene un script editable: apunta a una URL objetivo.\n" +
+                   $"// URL: {path}\n" +
+                   "// La plataforma captura/consulta esa URL al ejecutar; edita la URL desde \"Automatizar\".";
+        }
+
+        try
+        {
+            await using var stream = await _storage.OpenReadAsync(path, ct);
+            using var reader = new StreamReader(stream);
+            return await reader.ReadToEndAsync(ct);
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException
+            or UnauthorizedAccessException)
+        {
+            // El script vive fuera del almacenamiento gestionado por QA Guardian (o fue movido/eliminado).
+            return $"// El script de este caso ({testCase.Framework}) no está almacenado dentro de QA Guardian:\n" +
+                   $"// es un archivo externo en disco.\n" +
+                   $"// Ruta: {path}\n" +
+                   "// Edítalo en su ubicación original, o pega su contenido aquí y guarda para gestionarlo desde la plataforma.";
+        }
     }
 }
 
@@ -173,17 +204,21 @@ public class RecordPlaywrightScriptCommandHandler
     private readonly IProjectRepository _projects;
     private readonly IPlaywrightRecorder _recorder;
     private readonly IEvidenceStorage _storage;
+    private readonly IProjectAccessService _access;
 
-    public RecordPlaywrightScriptCommandHandler(IProjectRepository projects,
-        IPlaywrightRecorder recorder, IEvidenceStorage storage)
+    public RecordPlaywrightScriptCommandHandler(
+        IProjectRepository projects, IPlaywrightRecorder recorder,
+        IEvidenceStorage storage, IProjectAccessService access)
     {
         _projects = projects;
         _recorder = recorder;
         _storage = storage;
+        _access = access;
     }
 
     public async Task<Result<RecordedScript>> Handle(RecordPlaywrightScriptCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 

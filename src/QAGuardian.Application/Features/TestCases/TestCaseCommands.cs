@@ -1,6 +1,7 @@
 using FluentValidation;
 using MediatR;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Application.Common.Models;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
@@ -50,17 +51,22 @@ public class CreateTestCaseCommandHandler : IRequestHandler<CreateTestCaseComman
 {
     private readonly ITestCaseRepository _testCases;
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public CreateTestCaseCommandHandler(ITestCaseRepository testCases, IProjectRepository projects, IUnitOfWork uow)
+    public CreateTestCaseCommandHandler(
+        ITestCaseRepository testCases, IProjectRepository projects,
+        IProjectAccessService access, IUnitOfWork uow)
     {
         _testCases = testCases;
         _projects = projects;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<TestCaseDto>> Handle(CreateTestCaseCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 
@@ -98,18 +104,22 @@ public class UpdateTestCaseCommandValidator : AbstractValidator<UpdateTestCaseCo
 public class UpdateTestCaseCommandHandler : IRequestHandler<UpdateTestCaseCommand, Result<TestCaseDto>>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public UpdateTestCaseCommandHandler(ITestCaseRepository testCases, IUnitOfWork uow)
+    public UpdateTestCaseCommandHandler(
+        ITestCaseRepository testCases, IProjectAccessService access, IUnitOfWork uow)
     {
         _testCases = testCases;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<TestCaseDto>> Handle(UpdateTestCaseCommand request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.Id);
 
         testCase.Update(request.Title, request.Type, request.Priority, request.Preconditions, request.Tags);
         testCase.ClearSteps();
@@ -139,18 +149,22 @@ public class AutomateTestCaseCommandValidator : AbstractValidator<AutomateTestCa
 public class AutomateTestCaseCommandHandler : IRequestHandler<AutomateTestCaseCommand, Result<TestCaseDto>>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public AutomateTestCaseCommandHandler(ITestCaseRepository testCases, IUnitOfWork uow)
+    public AutomateTestCaseCommandHandler(
+        ITestCaseRepository testCases, IProjectAccessService access, IUnitOfWork uow)
     {
         _testCases = testCases;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<TestCaseDto>> Handle(AutomateTestCaseCommand request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.Id);
         testCase.Automate(request.Framework, request.ScriptPath);
         testCase.Activate();
         await _uow.SaveChangesAsync(ct);
@@ -165,18 +179,22 @@ public record DeleteTestCaseCommand(Guid Id) : IRequest<Result<bool>>;
 public class DeleteTestCaseCommandHandler : IRequestHandler<DeleteTestCaseCommand, Result<bool>>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public DeleteTestCaseCommandHandler(ITestCaseRepository testCases, IUnitOfWork uow)
+    public DeleteTestCaseCommandHandler(
+        ITestCaseRepository testCases, IProjectAccessService access, IUnitOfWork uow)
     {
         _testCases = testCases;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<bool>> Handle(DeleteTestCaseCommand request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetByIdAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        var testCase = await _testCases.GetByIdAsync(request.Id, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.Id);
         testCase.IsDeleted = true;
         await _uow.SaveChangesAsync(ct);
         return Result<bool>.Success(true);
@@ -191,11 +209,17 @@ public record GetTestCasesQuery(Guid ProjectId, int Page = 1, int PageSize = 20,
 public class GetTestCasesQueryHandler : IRequestHandler<GetTestCasesQuery, PagedResult<TestCaseDto>>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
 
-    public GetTestCasesQueryHandler(ITestCaseRepository testCases) => _testCases = testCases;
+    public GetTestCasesQueryHandler(ITestCaseRepository testCases, IProjectAccessService access)
+    {
+        _testCases = testCases;
+        _access = access;
+    }
 
     public async Task<PagedResult<TestCaseDto>> Handle(GetTestCasesQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var search = request.Search?.Trim();
         var (items, total) = await _testCases.PagedAsync(request.Page, request.PageSize,
             tc => tc.ProjectId == request.ProjectId && !tc.IsDeleted
@@ -211,13 +235,19 @@ public record GetTestCaseByIdQuery(Guid Id) : IRequest<TestCaseDto>;
 public class GetTestCaseByIdQueryHandler : IRequestHandler<GetTestCaseByIdQuery, TestCaseDto>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
 
-    public GetTestCaseByIdQueryHandler(ITestCaseRepository testCases) => _testCases = testCases;
+    public GetTestCaseByIdQueryHandler(ITestCaseRepository testCases, IProjectAccessService access)
+    {
+        _testCases = testCases;
+        _access = access;
+    }
 
     public async Task<TestCaseDto> Handle(GetTestCaseByIdQuery request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.Id);
         return testCase.ToDto();
     }
 }
@@ -230,18 +260,22 @@ public class LinkTestCaseToUserStoryCommandHandler
     : IRequestHandler<LinkTestCaseToUserStoryCommand, Result<TestCaseDto>>
 {
     private readonly ITestCaseRepository _testCases;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public LinkTestCaseToUserStoryCommandHandler(ITestCaseRepository testCases, IUnitOfWork uow)
+    public LinkTestCaseToUserStoryCommandHandler(
+        ITestCaseRepository testCases, IProjectAccessService access, IUnitOfWork uow)
     {
         _testCases = testCases;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<TestCaseDto>> Handle(LinkTestCaseToUserStoryCommand request, CancellationToken ct)
     {
-        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(TestCase), request.Id);
+        var testCase = await _testCases.GetWithStepsAsync(request.Id, ct);
+        if (testCase is null || !await _access.CanAccessProjectAsync(testCase.ProjectId, ct))
+            throw new NotFoundException(nameof(TestCase), request.Id);
         testCase.LinkUserStory(request.UserStoryId);
         await _uow.SaveChangesAsync(ct);
         return Result<TestCaseDto>.Success(testCase.ToDto());

@@ -10,8 +10,10 @@ public class FileEvidenceStorage : IEvidenceStorage
 
     public FileEvidenceStorage(IConfiguration configuration)
     {
-        _rootPath = configuration["Storage:EvidencePath"]
-            ?? Path.Combine(AppContext.BaseDirectory, "storage", "evidence");
+        var configured = configuration["Storage:EvidencePath"];
+        _rootPath = string.IsNullOrWhiteSpace(configured)
+            ? Path.Combine(AppContext.BaseDirectory, "storage", "evidence")
+            : configured;
         Directory.CreateDirectory(_rootPath);
     }
 

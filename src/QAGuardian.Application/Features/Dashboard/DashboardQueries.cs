@@ -49,12 +49,15 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
     private readonly IDefectRepository _defects;
     private readonly IRepository<SecurityFinding> _findings;
     private readonly IRepository<Module> _modules;
+    private readonly IProjectAccessService _access;
+    private readonly ICurrentUserService _currentUser;
     private readonly ICacheService _cache;
 
     public GetDashboardStatsQueryHandler(
         IProjectRepository projects, ITestCaseRepository testCases, ITestRunRepository runs,
         IDefectRepository defects, IRepository<SecurityFinding> findings,
-        IRepository<Module> modules, ICacheService cache)
+        IRepository<Module> modules, IProjectAccessService access,
+        ICurrentUserService currentUser, ICacheService cache)
     {
         _projects = projects;
         _testCases = testCases;
@@ -62,6 +65,8 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
         _defects = defects;
         _findings = findings;
         _modules = modules;
+        _access = access;
+        _currentUser = currentUser;
         _cache = cache;
     }
 
@@ -71,19 +76,43 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
         var since = request.FromDate ?? DateTime.UtcNow.AddDays(-30);
         var until = request.ToDate ?? DateTime.UtcNow;
 
-        var cacheKey = $"{CacheKeyPrefix}{pid?.ToString() ?? "global"}:{since:yyyyMMdd}:{until:yyyyMMdd}";
+        IReadOnlyList<Guid> scope;
+        if (pid is Guid projectId)
+        {
+            await _access.EnsureCanAccessProjectAsync(projectId, ct);
+            scope = [projectId];
+        }
+        else
+        {
+            scope = await _access.ListAccessibleProjectIdsAsync(ct);
+        }
+
+        var scopeIds = scope.ToList();
+        var userKey = _currentUser.UserId?.ToString("N") ?? "anon";
+        var cacheKey =
+            $"{CacheKeyPrefix}{userKey}:{pid?.ToString() ?? "scoped"}:{since:yyyyMMdd}:{until:yyyyMMdd}";
         var cached = await _cache.GetAsync<DashboardDto>(cacheKey, ct);
         if (cached is not null) return cached;
 
-        var totalProjects = await _projects.CountAsync(p => !p.IsDeleted && p.IsActive, ct);
+        if (scopeIds.Count == 0)
+        {
+            var empty = new DashboardDto(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 100,
+                [], [], []);
+            await _cache.SetAsync(cacheKey, empty, CacheTtl, ct);
+            return empty;
+        }
+
+        var totalProjects = await _projects.CountAsync(
+            p => !p.IsDeleted && p.IsActive && scopeIds.Contains(p.Id), ct);
         var totalTestCases = await _testCases.CountAsync(
-            tc => !tc.IsDeleted && (pid == null || tc.ProjectId == pid), ct);
+            tc => !tc.IsDeleted && scopeIds.Contains(tc.ProjectId), ct);
         var automated = await _testCases.CountAsync(
-            tc => !tc.IsDeleted && tc.Framework != AutomationFramework.Manual && (pid == null || tc.ProjectId == pid), ct);
+            tc => !tc.IsDeleted && tc.Framework != AutomationFramework.Manual
+                  && scopeIds.Contains(tc.ProjectId), ct);
 
         var recentRuns = await _runs.ListAsync(
             r => !r.IsDeleted && r.CreatedAt >= since && r.CreatedAt <= until
-                && (pid == null || r.ProjectId == pid), ct);
+                && scopeIds.Contains(r.ProjectId), ct);
 
         var completedIds = recentRuns
             .Where(r => r.Status == RunStatus.Completed)
@@ -104,10 +133,10 @@ public class GetDashboardStatsQueryHandler : IRequestHandler<GetDashboardStatsQu
 
         var openStatuses = new[] { DefectStatus.New, DefectStatus.Assigned, DefectStatus.InProgress, DefectStatus.Reopened };
         var openDefects = await _defects.CountAsync(
-            d => !d.IsDeleted && openStatuses.Contains(d.Status) && (pid == null || d.ProjectId == pid), ct);
+            d => !d.IsDeleted && openStatuses.Contains(d.Status) && scopeIds.Contains(d.ProjectId), ct);
         var criticalOpen = await _defects.CountAsync(
             d => !d.IsDeleted && openStatuses.Contains(d.Status)
-                && d.Severity >= DefectSeverity.Critical && (pid == null || d.ProjectId == pid), ct);
+                && d.Severity >= DefectSeverity.Critical && scopeIds.Contains(d.ProjectId), ct);
 
         var runIds = recentRuns.Select(r => r.Id).ToList();
         var vulns = await _findings.CountAsync(

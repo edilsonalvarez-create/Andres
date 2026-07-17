@@ -1,8 +1,12 @@
 using Hangfire;
 using Hangfire.SqlServer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QAGuardian.Application.Abstractions.Persistence;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Common;
@@ -15,6 +19,7 @@ using QAGuardian.Infrastructure.Notifications;
 using QAGuardian.Infrastructure.Persistence;
 using QAGuardian.Infrastructure.Reports;
 using QAGuardian.Infrastructure.Runners;
+using QAGuardian.Infrastructure.Security;
 using QAGuardian.Infrastructure.Storage;
 using QAGuardian.Infrastructure.Validation;
 using QAGuardian.Infrastructure.Visual;
@@ -31,8 +36,14 @@ public static class DependencyInjection
         services.AddDbContext<QAGuardianDbContext>(options =>
         {
             if (useSqlite)
+            {
+                // Migraciones generadas para SQL Server: el modelo runtime SQLite difiere del
+                // snapshot (tipos/anotaciones). Ignorar PendingModelChanges solo en SQLite/dev.
+                options.ConfigureWarnings(w =>
+                    w.Ignore(RelationalEventId.PendingModelChangesWarning));
                 options.UseSqlite(connectionString ?? "Data Source=qaguardian.db",
                     sqlite => sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+            }
             else
                 options.UseSqlServer(connectionString, sql =>
                 {
@@ -50,10 +61,16 @@ public static class DependencyInjection
         services.AddScoped<IDefectRepository, DefectRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IQualityGateRepository, QualityGateRepository>();
+        services.AddScoped<IProjectMemberRepository, ProjectMemberRepository>();
+        services.AddScoped<IProjectDatabaseEnvironmentRepository, ProjectDatabaseEnvironmentRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<DbInitializer>();
 
         // ── Identidad y seguridad ────────────────────────────────────
+        services.AddScoped<IProjectAccessService, ProjectAccessService>();
+        services.AddScoped<IProjectDatabaseConnectionResolver, ProjectDatabaseConnectionResolver>();
+        services.AddSingleton<IHostAddressResolver, DnsHostAddressResolver>();
+        services.AddSingleton<ISsrfGuard, SsrfGuard>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenEncryptionService, AesTokenEncryptionService>();
@@ -74,7 +91,39 @@ public static class DependencyInjection
         // Registrados como ITestRunner (no por tipo concreto): TestRunnerFactory resuelve
         // inyectando IEnumerable<ITestRunner> e indexando por .Framework — agregar un runner
         // nuevo solo requiere una línea aquí, sin tocar la fábrica (ADR-009).
+        services.Configure<RunnerSandboxOptions>(
+            configuration.GetSection(RunnerSandboxOptions.SectionName));
         services.AddSingleton<ProcessExecutor>();
+        // Sprint 13: workspace + sandbox (local o Docker según Runners:UseSandbox).
+        services.AddSingleton<IScriptExecutionEnvironment, LocalScriptExecutionEnvironment>();
+        services.AddSingleton<LocalSandboxedProcessExecutor>();
+        services.AddSingleton<DockerSandboxedProcessExecutor>();
+        // Sprint 13-C: fuera de Development NUNCA fallback host; Dev sin Docker → warning + local.
+        services.AddSingleton<ISandboxedProcessExecutor>(sp =>
+        {
+            var opts = sp.GetRequiredService<IOptions<RunnerSandboxOptions>>().Value;
+            var hostEnv = sp.GetRequiredService<IHostEnvironment>();
+            var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("QAGuardian.Runners.Sandbox");
+
+            if (opts.UseSandbox)
+            {
+                log.LogInformation("Runners:UseSandbox=true → DockerSandboxedProcessExecutor");
+                return sp.GetRequiredService<DockerSandboxedProcessExecutor>();
+            }
+
+            if (hostEnv.IsDevelopment())
+            {
+                log.LogWarning(
+                    "Runners:UseSandbox=false en Development → fallback LOCAL (host API). " +
+                    "No usar este modo fuera de Development.");
+                return sp.GetRequiredService<LocalSandboxedProcessExecutor>();
+            }
+
+            log.LogWarning(
+                "Runners:UseSandbox=false fuera de Development → se fuerza sandbox Docker " +
+                "(los scripts de usuario no se ejecutan en el proceso API).");
+            return sp.GetRequiredService<DockerSandboxedProcessExecutor>();
+        });
         services.AddScoped<ITestRunner, PlaywrightTestRunner>();
         services.AddScoped<ITestRunner, NewmanTestRunner>();
         services.AddScoped<ITestRunner, JMeterTestRunner>();
@@ -87,9 +136,18 @@ public static class DependencyInjection
 
         // ── Integraciones externas ───────────────────────────────────
         services.AddScoped<IntegrationSettingResolver>();
-        services.AddHttpClient<ISonarQubeClient, SonarQubeClient>();
-        services.AddHttpClient<IGitHubClient, GitHubApiClient>();
-        services.AddHttpClient("notifications");
+        services.AddTransient<SsrfOutboundHandler>();
+        // SonarQube: BaseUrl configurable por proyecto → handler SSRF en cada request.
+        services.AddHttpClient<ISonarQubeClient, SonarQubeClient>()
+            .AddHttpMessageHandler<SsrfOutboundHandler>()
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+        // GitHub API host fijo (api.github.com); BaseUrl del setting es repo, no API.
+        services.AddHttpClient<IGitHubClient, GitHubApiClient>()
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
+        // Webhooks Teams/Slack/Discord/Telegram → SsrfGuard en handler + NotificationDispatcher.
+        services.AddHttpClient("notifications")
+            .AddHttpMessageHandler<SsrfOutboundHandler>()
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
         services.AddScoped<IIntegrationConnectionTester, IntegrationConnectionTester>();
         services.AddScoped<IDatabaseSchemaValidator, SqlServerSchemaValidator>();
 

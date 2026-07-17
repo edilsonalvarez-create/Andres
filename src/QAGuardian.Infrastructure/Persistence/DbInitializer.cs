@@ -7,7 +7,11 @@ using QAGuardian.Domain.Enums;
 
 namespace QAGuardian.Infrastructure.Persistence;
 
-/// <summary>Crea el esquema y siembra datos iniciales (roles, admin, quality gate por defecto).</summary>
+/// <summary>
+/// Aplica migraciones EF (solo cuando se solicita) y siembra datos iniciales
+/// (roles, admin, quality gate por defecto). El esquema es propiedad de
+/// <c>Migrations/</c>; no hay parches SQL ad-hoc divergentes.
+/// </summary>
 public class DbInitializer
 {
     private readonly QAGuardianDbContext _context;
@@ -27,26 +31,45 @@ public class DbInitializer
         _logger = logger;
     }
 
-    public async Task InitializeAsync(string adminEmail, string adminPassword, CancellationToken ct = default)
+    /// <param name="applyMigrations">
+    /// Si es true, ejecuta <c>Database.MigrateAsync</c>.
+    /// En Production/QA/Staging el host debe pasar false; el esquema se aplica
+    /// con el job <c>dotnet ef database update</c> (ver Manual de Instalación).
+    /// </param>
+    public async Task InitializeAsync(
+        string adminEmail,
+        string adminPassword,
+        bool applyMigrations = false,
+        CancellationToken ct = default)
     {
-        // SQL Server usa migraciones EF Core (historial versionado en __EFMigrationsHistory);
-        // SQLite (desarrollo/pruebas) crea el esquema directo del modelo.
-        // Bases creadas por los scripts SQL del DBA: use Database:SkipInitialization=true.
-        if (_context.Database.IsSqlServer())
+        if (applyMigrations)
         {
-            await _context.Database.MigrateAsync(ct);
-            await EnsureSprint8SqlServerTablesAsync(ct);
+            // SQL Server: migraciones EF = fuente de verdad (job en prod; opcional en Development).
+            // SQLite: EnsureCreated desde el modelo actual. Las migraciones se generan para SQL Server
+            // (nvarchar(max), etc.) y no son aplicables tal cual en SQLite — sin parches EnsureSprint*.
+            if (_context.Database.IsSqlServer())
+            {
+                _logger.LogInformation("Aplicando migraciones EF Core (Database:ApplyMigrationsOnStartup).");
+                await _context.Database.MigrateAsync(ct);
+            }
+            else
+            {
+                _logger.LogInformation("SQLite/dev: EnsureCreated desde el modelo (sin parches ad-hoc).");
+                await _context.Database.EnsureCreatedAsync(ct);
+            }
         }
         else
         {
-            await _context.Database.EnsureCreatedAsync(ct);
-            // EnsureCreated no altera DBs existentes: tablas Sprint 8 se crean de forma aditiva.
-            await EnsureSprint8SqliteTablesAsync(ct);
+            _logger.LogInformation(
+                "Omitiendo Migrate/EnsureCreated en este proceso. " +
+                "El esquema debe existir vía 'dotnet ef database update' o el servicio compose migrate.");
         }
+
         await SeedRolesAsync(ct);
         await SeedAdminAsync(adminEmail, adminPassword, ct);
         await SeedDefaultQualityGateAsync(ct);
-        _logger.LogInformation("Base de datos inicializada correctamente.");
+        await SeedProjectMembersAsync(adminEmail, ct);
+        _logger.LogInformation("Base de datos inicializada correctamente (seed).");
     }
 
     private async Task SeedRolesAsync(CancellationToken ct)
@@ -138,60 +161,46 @@ public class DbInitializer
         await _context.SaveChangesAsync(ct);
     }
 
-    /// <summary>Crea tablas Sprint 8 en SQLite ya existente (EnsureCreated no migra).</summary>
-    private async Task EnsureSprint8SqliteTablesAsync(CancellationToken ct)
+    /// <summary>
+    /// Admin → ProjectAdmin en todos los proyectos. Idempotente (no duplica membresías).
+    /// </summary>
+    private async Task SeedProjectMembersAsync(string adminEmail, CancellationToken ct)
     {
-        await _context.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS "ApprovalRequests" (
-                "Id" TEXT NOT NULL CONSTRAINT "PK_ApprovalRequests" PRIMARY KEY,
-                "ProjectId" TEXT NOT NULL,
-                "Type" INTEGER NOT NULL,
-                "TargetEntityId" TEXT NOT NULL,
-                "Title" TEXT NOT NULL,
-                "Comment" TEXT NULL,
-                "Status" INTEGER NOT NULL,
-                "RequestedByUserId" TEXT NOT NULL,
-                "DecidedByUserId" TEXT NULL,
-                "DecidedAt" TEXT NULL,
-                "DecisionComment" TEXT NULL,
-                "CreatedAt" TEXT NOT NULL,
-                "CreatedBy" TEXT NULL,
-                "UpdatedAt" TEXT NULL,
-                "UpdatedBy" TEXT NULL,
-                "IsDeleted" INTEGER NOT NULL
-            );
-            """, ct);
-    }
+        var admin = await _context.Users
+            .FirstOrDefaultAsync(u => u.Email == adminEmail.ToLower(), ct);
+        if (admin is null)
+            return;
 
-    private async Task EnsureSprint8SqlServerTablesAsync(CancellationToken ct)
-    {
-        await _context.Database.ExecuteSqlRawAsync(
-            """
-            IF OBJECT_ID(N'dbo.ApprovalRequests', N'U') IS NULL
-            BEGIN
-                CREATE TABLE [ApprovalRequests] (
-                    [Id] uniqueidentifier NOT NULL,
-                    [ProjectId] uniqueidentifier NOT NULL,
-                    [Type] int NOT NULL,
-                    [TargetEntityId] uniqueidentifier NOT NULL,
-                    [Title] nvarchar(300) NOT NULL,
-                    [Comment] nvarchar(2000) NULL,
-                    [Status] int NOT NULL,
-                    [RequestedByUserId] uniqueidentifier NOT NULL,
-                    [DecidedByUserId] uniqueidentifier NULL,
-                    [DecidedAt] datetime2 NULL,
-                    [DecisionComment] nvarchar(2000) NULL,
-                    [CreatedAt] datetime2 NOT NULL,
-                    [CreatedBy] nvarchar(max) NULL,
-                    [UpdatedAt] datetime2 NULL,
-                    [UpdatedBy] nvarchar(max) NULL,
-                    [IsDeleted] bit NOT NULL,
-                    CONSTRAINT [PK_ApprovalRequests] PRIMARY KEY ([Id])
-                );
-                CREATE INDEX [IX_ApprovalRequests_Status_ProjectId] ON [ApprovalRequests] ([Status], [ProjectId]);
-                CREATE INDEX [IX_ApprovalRequests_TargetEntityId_Type_Status] ON [ApprovalRequests] ([TargetEntityId], [Type], [Status]);
-            END
-            """, ct);
+        var projectIds = await _context.Projects
+            .Where(p => !p.IsDeleted)
+            .Select(p => p.Id)
+            .ToListAsync(ct);
+        if (projectIds.Count == 0)
+            return;
+
+        var existing = await _context.ProjectMembers
+            .Where(m => m.UserId == admin.Id && !m.IsDeleted)
+            .Select(m => m.ProjectId)
+            .ToListAsync(ct);
+        var existingSet = existing.ToHashSet();
+
+        var added = 0;
+        foreach (var projectId in projectIds)
+        {
+            if (existingSet.Contains(projectId))
+                continue;
+
+            _context.ProjectMembers.Add(
+                new ProjectMember(projectId, admin.Id, RoleInProject.ProjectAdmin));
+            added++;
+        }
+
+        if (added > 0)
+        {
+            await _context.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Seed ProjectMembers: admin '{Email}' asignado a {Count} proyecto(s).",
+                adminEmail, added);
+        }
     }
 }

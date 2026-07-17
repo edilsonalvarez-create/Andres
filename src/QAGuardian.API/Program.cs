@@ -61,15 +61,50 @@ var oidcAuthority = builder.Configuration["Oidc:Authority"];
 var oidcEnabled = !string.IsNullOrWhiteSpace(oidcAuthority);
 const string OidcScheme = "Oidc";
 const string MultiAuthScheme = "MultiAuth";
+var allowHubQueryToken = builder.Environment.IsDevelopment();
 
-// Extrae el token del encabezado Authorization o del query string (SignalR).
-static string? ExtractToken(HttpContext context)
+// Token: Authorization (preferido). Query access_token solo en Development (SignalR legado).
+string? ExtractToken(HttpContext context)
 {
     var header = context.Request.Headers.Authorization.ToString();
     if (!string.IsNullOrEmpty(header)) return header;
-    return context.Request.Path.StartsWithSegments("/hubs")
-        ? context.Request.Query["access_token"].ToString()
-        : null;
+
+    if (!allowHubQueryToken || !context.Request.Path.StartsWithSegments("/hubs"))
+        return null;
+
+    var queryToken = context.Request.Query["access_token"].ToString();
+    return string.IsNullOrEmpty(queryToken) ? null : queryToken;
+}
+
+void ConfigureHubTokenFromRequest(MessageReceivedContext context, Microsoft.Extensions.Logging.ILogger logger)
+{
+    // Negotiate / LongPolling: Authorization Bearer.
+    var header = context.Request.Headers.Authorization.ToString();
+    if (!string.IsNullOrEmpty(header)
+        && header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Token = header["Bearer ".Length..].Trim();
+        return;
+    }
+
+    if (!context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+        return;
+
+    var queryToken = context.Request.Query["access_token"].ToString();
+    if (string.IsNullOrEmpty(queryToken))
+        return;
+
+    if (allowHubQueryToken)
+    {
+        logger.LogWarning(
+            "SignalR JWT vía query access_token (solo Development). Use Authorization header o LongPolling.");
+        context.Token = queryToken;
+        return;
+    }
+
+    // Production/Staging: rechazar token en query (TM-02).
+    logger.LogWarning(
+        "SignalR: access_token en query rechazado fuera de Development. Preferir Authorization / LongPolling.");
 }
 
 var authBuilder = builder.Services.AddAuthentication(options =>
@@ -100,15 +135,15 @@ authBuilder.AddJwtBearer(options =>
         ValidateLifetime = true,
         ClockSkew = TimeSpan.FromSeconds(30)
     };
-    // Permite el token por query string para el hub de SignalR.
+    // Hub: Authorization header (preferido). Query access_token solo en Development.
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
         {
-            var accessToken = context.Request.Query["access_token"];
-            if (!string.IsNullOrEmpty(accessToken)
-                && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
-                context.Token = accessToken;
+            ConfigureHubTokenFromRequest(
+                context,
+                context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("QAGuardian.SignalR.Auth"));
             return Task.CompletedTask;
         }
     };
@@ -130,10 +165,10 @@ if (oidcEnabled)
         {
             OnMessageReceived = context =>
             {
-                var accessToken = context.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(accessToken)
-                    && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
-                    context.Token = accessToken;
+                ConfigureHubTokenFromRequest(
+                    context,
+                    context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger("QAGuardian.SignalR.Auth"));
                 return Task.CompletedTask;
             },
             // El proveedor externo autentica la identidad; los roles RBAC son locales.
@@ -214,13 +249,28 @@ builder.Services.AddCors(options => options.AddPolicy("frontend", policy => poli
 
 // ── MVC + Versionado + Swagger ───────────────────────────────────────
 builder.Services.AddControllers();
-builder.Services.AddSignalR(options =>
+var signalRBuilder = builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
     options.KeepAliveInterval = TimeSpan.FromSeconds(15);
     options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
     options.MaximumReceiveMessageSize = 32 * 1024;
 });
+// Backplane Redis: obligatorio para progreso correcto con ≥2 réplicas de API.
+var redisConnection = builder.Configuration.GetConnectionString("Redis");
+if (!string.IsNullOrWhiteSpace(redisConnection))
+{
+    signalRBuilder.AddStackExchangeRedis(redisConnection, options =>
+    {
+        options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("qaguardian-signalr");
+    });
+    Log.Information("SignalR: backplane Redis habilitado (multi-réplica).");
+}
+else if (!builder.Environment.IsDevelopment())
+{
+    Log.Warning(
+        "ConnectionStrings:Redis vacío: SignalR sin backplane. Con ≥2 réplicas el progreso en tiempo real será inconsistente.");
+}
 builder.Services
     .AddApiVersioning(options =>
     {
@@ -349,6 +399,11 @@ app.UseHangfireDashboard("/hangfire", new DashboardOptions
 // configurarse explícitamente (env var / user-secrets / secret manager). Fuera
 // de Development, además se rechaza si coincide con un valor público conocido
 // (el que documentaba el README de versiones anteriores).
+//
+// Sprint 16-A: en Production/QA/Staging NUNCA se ejecuta Migrate/EnsureCreated
+// en el proceso API. El esquema lo aplica un job aparte (dotnet ef database update
+// o servicio compose `migrate`). Solo Development puede aplicar migraciones en boot
+// (Database:ApplyMigrationsOnStartup=true).
 const string KnownPublicDefaultPassword = "QaGuardian.2026!";
 
 if (!app.Configuration.GetValue("Database:SkipInitialization", false))
@@ -368,9 +423,15 @@ if (!app.Configuration.GetValue("Database:SkipInitialization", false))
             "Seed:AdminPassword coincide con el valor público documentado en versiones anteriores " +
             "de QA Guardian. Defina una contraseña única y secreta para este ambiente.");
 
+    // Hard guard: nunca Migrate/EnsureCreated en el proceso API fuera de Development,
+    // aunque alguien force Database__ApplyMigrationsOnStartup=true en prod.
+    var applyMigrationsOnStartup =
+        app.Environment.IsDevelopment()
+        && app.Configuration.GetValue("Database:ApplyMigrationsOnStartup", true);
+
     using var scope = app.Services.CreateScope();
     var initializer = scope.ServiceProvider.GetRequiredService<DbInitializer>();
-    await initializer.InitializeAsync(seedEmail, seedPassword);
+    await initializer.InitializeAsync(seedEmail, seedPassword, applyMigrationsOnStartup);
 }
 
 app.Run();

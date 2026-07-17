@@ -1,6 +1,6 @@
+// El refresh token nunca llega al JS: viaja solo en una cookie httpOnly (ver api/client.ts).
 export interface AuthResponse {
   accessToken: string;
-  refreshToken: string;
   expiresInMinutes: number;
   userId: string;
   email: string;
@@ -37,6 +37,8 @@ export interface TestStep {
 export interface TestCase {
   id: string;
   projectId: string;
+  moduleId?: string | null;
+  userStoryId?: string | null;
   code: string;
   title: string;
   preconditions?: string;
@@ -47,6 +49,33 @@ export interface TestCase {
   automationScriptPath?: string;
   tags?: string;
   steps: TestStep[];
+}
+
+/** Historia de usuario del catálogo (trazabilidad Req → Story → Case). */
+export interface UserStory {
+  id: string;
+  requirementId: string;
+  title: string;
+  acceptanceCriteria?: string | null;
+}
+
+export interface CatalogModule {
+  id: string;
+  name: string;
+}
+
+export interface CatalogRequirement {
+  id: string;
+  code: string;
+  title: string;
+}
+
+export interface ProjectVersion {
+  id: string;
+  projectId: string;
+  number: string;
+  notes?: string | null;
+  releasedAt?: string | null;
 }
 
 export interface TestRun {
@@ -69,6 +98,23 @@ export interface TestRun {
   gateStatus?: string;
   deploymentApproved?: boolean;
   errorMessage?: string;
+}
+
+/** Diagnóstico IA persistido (GET /testruns/{id}/ai-analysis). */
+export interface AiAnalysisItem {
+  id: string;
+  testResultId?: string | null;
+  testName?: string | null;
+  summary: string;
+  probableCause: string;
+  confidence?: number | null;
+  evidenceQuote?: string | null;
+  recommendations: string[];
+  criticality: number;
+  suggestedPriority: number;
+  suggestedOwnerRole: string;
+  modelUsed: string;
+  createdAt: string;
 }
 
 export interface TestResult {
@@ -132,4 +178,4 @@ export const DEFECT_STATUS: Record<number, string> = {
   1: "Nuevo", 2: "Asignado", 3: "En progreso", 4: "Resuelto", 5: "Verificado", 6: "Cerrado", 7: "Reabierto", 8: "Rechazado",
 };
 export const SEVERITIES: Record<number, string> = { 1: "Trivial", 2: "Menor", 3: "Mayor", 4: "Crítica", 5: "Bloqueante" };
-export const FRAMEWORKS: Record<number, string> = { 0: "Manual", 1: "Playwright", 2: "Postman", 3: "JMeter", 4: "OWASP ZAP", 5: "SQL" };
+export const FRAMEWORKS: Record<number, string> = { 0: "Manual", 1: "Playwright", 2: "Postman", 3: "JMeter", 4: "OWASP ZAP", 5: "SQL", 6: "Visual Regression", 7: "Selenium IDE" };

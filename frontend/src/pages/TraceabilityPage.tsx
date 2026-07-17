@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useState } from "react";
 import {
-  Alert, Box, Chip, Collapse, IconButton, Paper, Table, TableBody, TableCell,
+  Alert, Box, Button, Chip, Collapse, IconButton, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, Typography,
 } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import { Link as RouterLink } from "react-router-dom";
 import { api } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
 import EmptyState from "../components/EmptyState";
@@ -82,10 +83,21 @@ export default function TraceabilityPage() {
     <Box className="flex flex-col gap-4 p-4">
       <Box className="flex flex-wrap items-center justify-between gap-3">
         <Typography variant="h5" fontWeight={700}>Trazabilidad &amp; Cobertura</Typography>
-        <ProjectSelect value={projectId} onChange={setProjectId} />
+        <Box className="flex gap-2 items-center">
+          <Button component={RouterLink} to="/casos" size="small" variant="outlined">
+            Vincular casos
+          </Button>
+          <ProjectSelect value={projectId} onChange={setProjectId} />
+        </Box>
       </Box>
 
       {error && <Alert severity="error">{error}</Alert>}
+      {projectId && !error && (
+        <Typography variant="body2" color="text.secondary">
+          La cobertura se calcula con el vínculo Caso → Historia (desde Casos, icono de enlace).
+          Cree módulos, requerimientos e historias en Catálogo si la matriz está vacía.
+        </Typography>
+      )}
 
       {data && (
         <Box className="grid grid-cols-2 md:grid-cols-5 gap-3">

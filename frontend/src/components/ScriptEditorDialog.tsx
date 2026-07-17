@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
 import {
-  Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent,
-  DialogTitle, MenuItem, TextField,
+  Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent,
+  DialogTitle, MenuItem, Stack, TextField, Typography,
 } from "@mui/material";
-import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import { api } from "../api/client";
 import { FRAMEWORKS, TEST_TYPES, type TestCase } from "../types";
+import PostmanForm from "./PostmanForm";
+import JMeterForm from "./JMeterForm";
+import OWASPZAPForm from "./OWASPZAPForm";
+import PlaywrightForm from "./PlaywrightForm";
+import SeleniumIDEForm from "./SeleniumIDEForm";
 
 interface Props {
   projectId: string;
@@ -15,7 +20,28 @@ interface Props {
   onSaved: () => void;
 }
 
-const AUTOMATABLE_FRAMEWORKS = [1, 2, 3, 4]; // Playwright, Postman, JMeter, ZAP
+interface RunItem {
+  name: string;
+  status: string;
+  durationMs: number;
+  errorMessage?: string | null;
+}
+
+interface RunResult {
+  succeeded: boolean;
+  framework: string;
+  total: number;
+  passed: number;
+  failed: number;
+  items: RunItem[];
+  errorMessage?: string | null;
+}
+
+interface SavedScript {
+  testCaseId: string;
+}
+
+const AUTOMATABLE_FRAMEWORKS = [1, 2, 3, 4, 7]; // Playwright, Postman, JMeter, ZAP, Selenium IDE
 
 export default function ScriptEditorDialog({ projectId, testCase, open, onClose, onSaved }: Props) {
   const [name, setName] = useState("");
@@ -24,11 +50,14 @@ export default function ScriptEditorDialog({ projectId, testCase, open, onClose,
   const [content, setContent] = useState("");
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setMessage(null);
+    setRunResult(null);
     if (testCase) {
       setName(testCase.title);
       setFramework(testCase.framework || 1);
@@ -64,19 +93,25 @@ export default function ScriptEditorDialog({ projectId, testCase, open, onClose,
     }
   };
 
+  // Persiste el script y devuelve el id del caso (para editar o ejecutar). No cierra el diálogo.
+  const persist = async (): Promise<string | null> => {
+    const { data } = await api.post<SavedScript>("/testcases/script", {
+      projectId,
+      testCaseId: testCase?.id ?? null,
+      name,
+      framework,
+      type,
+      content,
+    });
+    onSaved();
+    return data.testCaseId;
+  };
+
   const save = async () => {
     setBusy(true);
     setMessage(null);
     try {
-      await api.post("/testcases/script", {
-        projectId,
-        testCaseId: testCase?.id ?? null,
-        name,
-        framework,
-        type,
-        content,
-      });
-      onSaved();
+      await persist();
       onClose();
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { error?: string } } }).response?.data?.error;
@@ -84,6 +119,34 @@ export default function ScriptEditorDialog({ projectId, testCase, open, onClose,
     } finally {
       setBusy(false);
     }
+  };
+
+  // Guarda y ejecuta el caso con el runner de su framework, mostrando el resultado en línea.
+  const saveAndRun = async () => {
+    setBusy(true);
+    setRunning(true);
+    setMessage(null);
+    setRunResult(null);
+    try {
+      const id = await persist();
+      if (!id) throw new Error("No se obtuvo el identificador del caso guardado.");
+      const { data } = await api.post<RunResult>(`/testcases/${id}/run`);
+      setRunResult(data);
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { error?: string } } }).response?.data?.error;
+      setMessage(detail ?? "No se pudo ejecutar la prueba.");
+    } finally {
+      setBusy(false);
+      setRunning(false);
+    }
+  };
+
+  const statusColor = (status: string): "success" | "error" | "warning" | "default" => {
+    const s = status.toLowerCase();
+    if (s === "passed") return "success";
+    if (s === "failed") return "error";
+    if (s === "skipped" || s === "flaky") return "warning";
+    return "default";
   };
 
   return (
@@ -108,33 +171,158 @@ export default function ScriptEditorDialog({ projectId, testCase, open, onClose,
           </TextField>
         </Box>
 
+        {/* Formularios específicos por Framework */}
         {framework === 1 && (
-          <Box className="flex gap-3 items-center">
-            <TextField label="URL a grabar (codegen)" value={url}
-              onChange={(e) => setUrl(e.target.value)} size="small" className="flex-1" />
-            <Button variant="outlined" color="error" startIcon={<FiberManualRecordIcon />}
-              disabled={busy} onClick={() => void record()}>
-              Grabar
-            </Button>
-          </Box>
+          <PlaywrightForm
+            content={content}
+            onChange={setContent}
+            recordUrl={url}
+            onRecordUrlChange={setUrl}
+            onRecord={() => void record()}
+            busy={busy}
+          />
         )}
 
-        <TextField
-          label="Contenido del script"
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          multiline
-          minRows={16}
-          fullWidth
-          slotProps={{ input: { style: { fontFamily: "Consolas, 'Courier New', monospace", fontSize: 13 } } }}
-        />
+        {framework === 2 && (
+          <PostmanForm content={content} onChange={setContent} />
+        )}
+
+        {framework === 3 && (
+          <JMeterForm content={content} onChange={setContent} />
+        )}
+
+        {framework === 4 && (
+          <OWASPZAPForm content={content} onChange={setContent} />
+        )}
+
+        {framework === 7 && (
+          <SeleniumIDEForm content={content} onChange={setContent} />
+        )}
+
+        {/* Textarea para otros frameworks (Manual, SQL, etc.) */}
+        {framework !== 1 && framework !== 2 && framework !== 3 && framework !== 4 && framework !== 7 && (
+          <TextField
+            label="Contenido del script"
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            multiline
+            minRows={16}
+            fullWidth
+            slotProps={{ input: { style: { fontFamily: "Consolas, 'Courier New', monospace", fontSize: 13 } } }}
+          />
+        )}
+
+        {/* Resultado de "Guardar y ejecutar" */}
+        {running && (
+          <Alert severity="info" icon={<CircularProgress size={18} />}>
+            Ejecutando la prueba con el runner de {FRAMEWORKS[framework]}…
+          </Alert>
+        )}
+
+        {runResult && !running && <RunResultPanel result={runResult} statusColor={statusColor} />}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={busy}>Cancelar</Button>
+        <Button onClick={onClose} disabled={busy}>Cerrar</Button>
+        <Button
+          variant="outlined"
+          color="success"
+          startIcon={<PlayArrowIcon />}
+          onClick={() => void saveAndRun()}
+          disabled={busy || !name || !content}
+        >
+          {running ? <CircularProgress size={20} /> : "Guardar y ejecutar"}
+        </Button>
         <Button variant="contained" onClick={() => void save()} disabled={busy || !name || !content}>
-          {busy ? <CircularProgress size={20} /> : "Guardar"}
+          {busy && !running ? <CircularProgress size={20} /> : "Guardar"}
         </Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+/** Panel con el resultado de ejecutar el caso individual. */
+function RunResultPanel({
+  result,
+  statusColor,
+}: {
+  result: RunResult;
+  statusColor: (s: string) => "success" | "error" | "warning" | "default";
+}) {
+  // Falla de runner (herramienta no disponible, sin reporte, etc.).
+  if (!result.succeeded) {
+    return (
+      <Alert severity="error">
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          No se pudo ejecutar la prueba
+        </Typography>
+        <Typography variant="caption" sx={{ whiteSpace: "pre-wrap" }}>
+          {result.errorMessage ?? "El motor de ejecución no devolvió resultados."}
+        </Typography>
+      </Alert>
+    );
+  }
+
+  // El runner corrió pero no reportó pruebas individuales.
+  if (result.total === 0) {
+    return (
+      <Alert severity="warning">
+        {result.errorMessage ?? "El runner no reportó pruebas para este script."}
+      </Alert>
+    );
+  }
+
+  const allPassed = result.failed === 0;
+
+  return (
+    <Box sx={{ border: "1px solid #e5e7eb", borderRadius: 1, overflow: "hidden" }}>
+      <Box
+        sx={{
+          px: 2,
+          py: 1.25,
+          background: allPassed ? "#f0fdf4" : "#fef2f2",
+          borderBottom: "1px solid #e5e7eb",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <Typography variant="body2" sx={{ fontWeight: 700, color: allPassed ? "#15803d" : "#b91c1c" }}>
+          {allPassed ? "✓ Prueba exitosa" : "✗ Prueba con fallos"}
+        </Typography>
+        <Typography variant="caption" sx={{ color: "#6b7280" }}>
+          {result.passed}/{result.total} exitosas · {result.framework}
+        </Typography>
+      </Box>
+      <Stack divider={<Box sx={{ borderBottom: "1px solid #f3f4f6" }} />}>
+        {result.items.map((item, i) => (
+          <Box key={i} sx={{ px: 2, py: 1 }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Chip label={item.status} size="small" color={statusColor(item.status)} sx={{ height: 22 }} />
+              <Typography variant="body2" sx={{ flex: 1, fontSize: 13 }}>
+                {item.name}
+              </Typography>
+              <Typography variant="caption" sx={{ color: "#6b7280" }}>
+                {item.durationMs}ms
+              </Typography>
+            </Box>
+            {item.errorMessage && (
+              <Typography
+                variant="caption"
+                sx={{
+                  display: "block",
+                  mt: 0.5,
+                  color: "#b91c1c",
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "monospace",
+                  fontSize: 11,
+                }}
+              >
+                {item.errorMessage}
+              </Typography>
+            )}
+          </Box>
+        ))}
+      </Stack>
+    </Box>
   );
 }

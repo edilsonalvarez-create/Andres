@@ -2,10 +2,15 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <!-- Piso de cobertura (gate de regresión): la CI falla si baja de este umbral.
-         Nivel actual ~15.5% de líneas; subir el umbral a medida que crezca la suite. -->
-    <Threshold>15</Threshold>
+         Sprint 16-C: piso honesto — línea real ~46% (2026-07-17); se deja margen de
+         ~2pts para no romper por fluctuaciones menores. Subir a medida que crezca la suite. -->
+    <Threshold>44</Threshold>
     <ThresholdType>line</ThresholdType>
     <ThresholdStat>total</ThresholdStat>
+    <!-- Exclusiones de cobertura: código generado (migraciones EF, scaffolding del snapshot
+         del modelo) no se prueba a mano — es artefacto de herramienta, no lógica de negocio. -->
+    <ExcludeByFile>**/Migrations/*.cs</ExcludeByFile>
+    <Exclude>[*]QAGuardian.Infrastructure.Migrations.*</Exclude>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.msbuild" Version="10.0.1">
@@ -20,6 +25,9 @@
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Domain se referencia explícitamente (además de transitivamente) para que Stryker.NET
+         pueda mutarlo directamente; las pruebas de dominio ya usan sus tipos. -->
+    <ProjectReference Include="..\..\src\QAGuardian.Domain\QAGuardian.Domain.csproj" />
     <ProjectReference Include="..\..\src\QAGuardian.Application\QAGuardian.Application.csproj" />
     <ProjectReference Include="..\..\src\QAGuardian.Infrastructure\QAGuardian.Infrastructure.csproj" />
   </ItemGroup>

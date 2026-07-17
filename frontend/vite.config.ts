@@ -42,6 +42,15 @@ export default defineConfig({
       // Solo el código propio: se excluyen entradas, tipos y el propio andamiaje de pruebas.
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/main.tsx", "src/**/*.d.ts", "src/test/**", "src/**/*.test.{ts,tsx}"],
+      // Piso de cobertura (gate de regresión, Sprint 16-C): real ~3% líneas / ~54% branch
+      // (2026-07-17, `npm run test:coverage`); la mayoría de páginas aún no tiene pruebas
+      // de componente. Umbral honesto con margen menor — sube a medida que crezca la suite.
+      thresholds: {
+        lines: 2.5,
+        statements: 2.5,
+        functions: 20,
+        branches: 45,
+      },
     },
   },
 });

@@ -8,6 +8,13 @@
         "dotnet-ef"
       ],
       "rollForward": false
+    },
+    "dotnet-stryker": {
+      "version": "4.5.1",
+      "commands": [
+        "dotnet-stryker"
+      ],
+      "rollForward": false
     }
   }
 }

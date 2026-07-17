@@ -1,0 +1,21 @@
+QA GUARDIAN — NARRACIÓN CORTA (~3 MINUTOS)
+Versión express del tutorial "Cómo un QA usa la plataforma".
+Instrucciones: lee de corrido o pégalo en un motor de texto-a-voz.
+
+[Intro — 20s]
+QA Guardian es la plataforma que centraliza toda la calidad de tus proyectos y decide, de forma automática, si un despliegue se aprueba o se rechaza. En tres minutos verás el flujo completo que sigue un analista de QA.
+
+[Ingreso y proyecto — 25s]
+Primero inicias sesión con tu cuenta; tu rol define qué puedes hacer. Luego eliges el proyecto en el selector superior. El Dashboard te da un panorama inmediato: cobertura, porcentaje de éxito, defectos y vulnerabilidades.
+
+[Crear y automatizar — 40s]
+Creas un caso de prueba con su código, tipo y pasos —acción y resultado esperado—. Después lo automatizas eligiendo el motor según el tipo: Playwright para funcionales y regresión, Postman para APIs, JMeter para rendimiento, OWASP ZAP para seguridad y Regresión Visual para cambios de interfaz. El script puede vivir en la plataforma, en un archivo externo o ser una URL objetivo.
+
+[Ejecutar y revisar — 45s]
+Para ejecutar, pulsas "Nueva ejecución", eliges el tipo y el ambiente, y la prueba corre en segundo plano. El estado se actualiza en tiempo real: Pendiente, En curso y, al final, Completada o Fallida. En la lista ves los totales: cuántas pasaron, cuántas fallaron y el porcentaje de éxito. Al abrir el detalle encuentras la evidencia automática —capturas, reportes, diferencias visuales— y puedes descargar el reporte en PDF o Word.
+
+[El Quality Gate — 30s]
+Aquí está el corazón de la plataforma: el Quality Gate. Según reglas configurables, cada ejecución recibe un veredicto. Si pasa, el despliegue se aprueba; si no, se bloquea automáticamente. Así, ningún cambio llega a producción sin evidencia de calidad.
+
+[Integraciones y cierre — 20s]
+Y todo se conecta con tu ecosistema: publica el veredicto en los Pull Requests de GitHub, trae las métricas de SonarQube y genera el pipeline de integración continua que detiene el despliegue si el gate falla. Crear, automatizar, ejecutar, revisar y aprobar: eso es QA Guardian, el Quality Gate de tus despliegues.

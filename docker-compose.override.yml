@@ -5,6 +5,12 @@
 # Producción/CI: use únicamente el archivo base, sin este override, p. ej.:
 #   docker compose -f docker-compose.yml up -d
 # o elimine/no despliegue este archivo en el servidor de producción.
+#
+# Sprint 17-A (B1): el aislamiento del daemon Docker (docker-socket-proxy) vive en el
+# archivo base y aplica también aquí — el API nunca monta /var/run/docker.sock. En
+# desarrollo local el API suele ejecutarse FUERA de compose con Runners:UseSandbox=false
+# (fallback local), por lo que la ruta de contenedor/proxy no se ejercita; este override
+# solo abre puertos de BD/Redis para depurar y no reintroduce el socket.
 services:
   sqlserver:
     ports:

@@ -88,7 +88,7 @@ public sealed class SsrfGuard : ISsrfGuard
         if (string.IsNullOrWhiteSpace(host))
             return Result<Uri>.Failure("La URL de salida no tiene host.");
 
-        if (BlockedHostNames.Contains(host) || host.EndsWith(".metadata.google.internal", StringComparison.OrdinalIgnoreCase))
+        if (IsBlockedHostName(host))
             return Result<Uri>.Failure("Host de metadata cloud bloqueado (SSRF).");
 
         if (uri.IsDefaultPort == false && (uri.Port <= 0 || uri.Port > 65535))
@@ -141,6 +141,11 @@ public sealed class SsrfGuard : ISsrfGuard
     private static Result<Uri> FailBlockedIp(IPAddress address)
         => Result<Uri>.Failure(
             $"La URL de salida resuelve a una dirección no permitida ({address}): red privada, loopback, link-local o metadata.");
+
+    /// <summary>True si el hostname es de metadata cloud u otro nombre interno bloqueado.</summary>
+    internal static bool IsBlockedHostName(string host)
+        => BlockedHostNames.Contains(host)
+           || host.EndsWith(".metadata.google.internal", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>True si la IP no debe usarse como destino saliente controlado por usuario.</summary>
     public static bool IsBlockedAddress(IPAddress address)
@@ -217,7 +222,7 @@ public sealed class SsrfGuard : ISsrfGuard
         return false;
     }
 
-    private static bool TryParseHostAsIp(string host, out IPAddress ip)
+    internal static bool TryParseHostAsIp(string host, out IPAddress ip)
     {
         // Quitar corchetes IPv6 si vinieran en Host (IdnHost normalmente no los trae).
         var candidate = host;
@@ -227,7 +232,7 @@ public sealed class SsrfGuard : ISsrfGuard
         return IPAddress.TryParse(candidate, out ip!);
     }
 
-    private static bool TryParseDecimalIpv4(string host, out IPAddress ip)
+    internal static bool TryParseDecimalIpv4(string host, out IPAddress ip)
     {
         ip = IPAddress.None;
         if (host.Length == 0 || host.Length > 10 || !ulong.TryParse(host, out var value) || value > uint.MaxValue)

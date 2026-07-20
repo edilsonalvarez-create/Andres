@@ -236,17 +236,20 @@ public class UpsertProjectDatabaseEnvironmentCommandHandler
 {
     private readonly IProjectDatabaseEnvironmentRepository _envs;
     private readonly ITokenEncryptionService _encryption;
+    private readonly ISqlHostGuard _sqlHostGuard;
     private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
     public UpsertProjectDatabaseEnvironmentCommandHandler(
         IProjectDatabaseEnvironmentRepository envs,
         ITokenEncryptionService encryption,
+        ISqlHostGuard sqlHostGuard,
         IProjectAccessService access,
         IUnitOfWork uow)
     {
         _envs = envs;
         _encryption = encryption;
+        _sqlHostGuard = sqlHostGuard;
         _access = access;
         _uow = uow;
     }
@@ -254,6 +257,12 @@ public class UpsertProjectDatabaseEnvironmentCommandHandler
     public async Task<Result<Guid>> Handle(UpsertProjectDatabaseEnvironmentCommand request, CancellationToken ct)
     {
         await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
+
+        // Sprint 18-A (B2): allowlist de destinos SQL ANTES de cifrar/persistir.
+        // El Result de fallo llega al controlador como 400 con mensaje legible (FromResult).
+        var destination = _sqlHostGuard.ValidateConnectionString(request.ConnectionString);
+        if (!destination.IsSuccess)
+            return Result<Guid>.Failure(destination.Error!);
 
         var name = ProjectDatabaseEnvironment.NormalizeName(request.Name);
         var encrypted = _encryption.Encrypt(request.ConnectionString.Trim());

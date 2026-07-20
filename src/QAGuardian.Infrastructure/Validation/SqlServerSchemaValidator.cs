@@ -9,9 +9,21 @@ namespace QAGuardian.Infrastructure.Validation;
 /// </summary>
 public class SqlServerSchemaValidator : IDatabaseSchemaValidator
 {
+    private readonly ISqlHostGuard _sqlHostGuard;
+
+    public SqlServerSchemaValidator(ISqlHostGuard sqlHostGuard)
+    {
+        _sqlHostGuard = sqlHostGuard;
+    }
+
     public async Task<IReadOnlyList<SchemaDifference>> CompareAsync(
         string sourceConnectionString, string targetConnectionString, CancellationToken ct = default)
     {
+        // Sprint 18-A (B2): defensa en profundidad — validar destino ANTES de abrir SqlConnection,
+        // aunque el Upsert ya lo haya validado (cubre entornos persistidos antes del guard y config).
+        EnsureAllowedDestination(sourceConnectionString, "origen");
+        EnsureAllowedDestination(targetConnectionString, "destino");
+
         var source = await SnapshotAsync(sourceConnectionString, ct);
         var target = await SnapshotAsync(targetConnectionString, ct);
         var differences = new List<SchemaDifference>();
@@ -32,6 +44,17 @@ public class SqlServerSchemaValidator : IDatabaseSchemaValidator
         }
 
         return differences;
+    }
+
+    /// <summary>
+    /// Lanza InvalidOperationException con mensaje legible (sin credenciales) si el destino
+    /// no está permitido. El job Hangfire la captura y marca la corrida como fallida.
+    /// </summary>
+    private void EnsureAllowedDestination(string connectionString, string role)
+    {
+        var result = _sqlHostGuard.ValidateConnectionString(connectionString);
+        if (!result.IsSuccess)
+            throw new InvalidOperationException($"Entorno {role} rechazado: {result.Error}");
     }
 
     private static void CompareSets(List<SchemaDifference> differences, string category,

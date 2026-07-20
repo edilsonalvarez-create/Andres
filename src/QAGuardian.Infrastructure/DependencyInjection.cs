@@ -71,6 +71,10 @@ public static class DependencyInjection
         services.AddScoped<IProjectDatabaseConnectionResolver, ProjectDatabaseConnectionResolver>();
         services.AddSingleton<IHostAddressResolver, DnsHostAddressResolver>();
         services.AddSingleton<ISsrfGuard, SsrfGuard>();
+        // Sprint 18-A (B2): allowlist de destinos SQL para entornos de BD por proyecto.
+        services.Configure<DatabaseValidationOptions>(
+            configuration.GetSection(DatabaseValidationOptions.SectionName));
+        services.AddSingleton<ISqlHostGuard, SqlHostGuard>();
         services.AddSingleton<IJwtTokenService, JwtTokenService>();
         services.AddSingleton<IPasswordHasher, BcryptPasswordHasher>();
         services.AddSingleton<ITokenEncryptionService, AesTokenEncryptionService>();

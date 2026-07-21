@@ -144,6 +144,14 @@ secretos, o superficie de red.
       grants. Development puede `PrepareSchemaIfNecessary=true` (o `UseInMemory=true`).
       Tests: `HangfirePrepareSchemaTests`.
 
+## Sprint 21-A — B6 (ACL audit + quality gates)
+
+- [x] **B6 — ACL de proyecto:** `GetAuditLogQuery` filtra por proyectos accesibles (Admin ve
+      todo; filas sin GUID de proyecto → solo Admin). Mutación de Quality Gates y audit-log
+      del gate → política `Administer`. `AssignGateToProject` exige `ProjectAdmin` vía
+      `EnsureCanAdministerProjectAsync`. ADR: `docs/Architecture/adr/ADR-013-project-acl-audit-quality-gates.md`.
+      Tests: `Sprint21AclIdorTests`, `ProjectAccessServiceTests` (ProjectAdmin).
+
 ---
 
 ## Checklist de PR (a aplicar en cada revisión de código)

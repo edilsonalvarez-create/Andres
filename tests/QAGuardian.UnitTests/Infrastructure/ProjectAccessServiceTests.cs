@@ -111,9 +111,26 @@ public class ProjectAccessServiceTests : IDisposable
 
         (await _sut.CanAccessProjectAsync(_projectA)).Should().BeTrue();
         (await _sut.CanAccessProjectAsync(_projectB)).Should().BeTrue();
+        _sut.IsGlobalAdministrator().Should().BeTrue();
 
         var ids = await _sut.ListAccessibleProjectIdsAsync();
         ids.Should().BeEquivalentTo([_projectA, _projectB]);
+    }
+
+    [Fact]
+    public async Task Member_no_administra_proyecto_ProjectAdmin_si()
+    {
+        var adminUser = Guid.NewGuid();
+        _context.ProjectMembers.Add(new ProjectMember(_projectA, adminUser, RoleInProject.ProjectAdmin));
+        await _context.SaveChangesAsync();
+
+        AsUser(_userA); // Member
+        await _sut.Invoking(s => s.EnsureCanAdministerProjectAsync(_projectA))
+            .Should().ThrowAsync<NotFoundException>();
+
+        AsUser(adminUser);
+        await _sut.Invoking(s => s.EnsureCanAdministerProjectAsync(_projectA))
+            .Should().NotThrowAsync();
     }
 
     [Fact]

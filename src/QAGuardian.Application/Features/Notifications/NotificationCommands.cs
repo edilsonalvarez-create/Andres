@@ -8,8 +8,45 @@ using QAGuardian.Domain.Enums;
 
 namespace QAGuardian.Application.Features.Notifications;
 
-public record NotificationChannelDto(Guid Id, Guid? ProjectId, NotificationChannel Channel,
-    string Target, NotificationEvents Events, bool IsEnabled);
+public record NotificationChannelDto(
+    Guid Id,
+    Guid? ProjectId,
+    NotificationChannel Channel,
+    /// <summary>Últimos caracteres del destino (nunca el secreto completo).</summary>
+    string? TargetHint,
+    bool IsConfigured,
+    NotificationEvents Events,
+    bool IsEnabled)
+{
+    private const int HintSuffixChars = 4;
+
+    /// <summary>Proyecta la entidad sin exponer Target en claro (B7 / OWASP A01:2025).</summary>
+    public static NotificationChannelDto FromEntity(NotificationChannelConfig config)
+        => new(
+            config.Id,
+            config.ProjectId,
+            config.Channel,
+            MaskTarget(config.Target),
+            IsConfigured: !string.IsNullOrWhiteSpace(config.Target),
+            config.Events,
+            config.IsEnabled);
+
+    /// <summary>
+    /// Enmascara el destino: solo un hint de los últimos caracteres (o "****" si es muy corto).
+    /// Nunca devuelve webhooks, bot tokens ni correos completos.
+    /// </summary>
+    public static string? MaskTarget(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return null;
+
+        var value = target.Trim();
+        if (value.Length <= HintSuffixChars)
+            return "****";
+
+        return "***" + value[^HintSuffixChars..];
+    }
+}
 
 public record UpsertNotificationChannelCommand(
     Guid? ProjectId, NotificationChannel Channel, string Target,
@@ -82,8 +119,7 @@ public class UpsertNotificationChannelCommandHandler
         }
 
         await _uow.SaveChangesAsync(ct);
-        return Result<NotificationChannelDto>.Success(new NotificationChannelDto(
-            config.Id, config.ProjectId, config.Channel, config.Target, config.Events, config.IsEnabled));
+        return Result<NotificationChannelDto>.Success(NotificationChannelDto.FromEntity(config));
     }
 }
 
@@ -122,7 +158,6 @@ public class GetNotificationChannelsQueryHandler
                   || (c.ProjectId != null && accessible.Contains(c.ProjectId.Value))
                 : c.ProjectId == request.ProjectId || (c.ProjectId == null && isAdmin)),
             ct);
-        return items.Select(c => new NotificationChannelDto(
-            c.Id, c.ProjectId, c.Channel, c.Target, c.Events, c.IsEnabled)).ToList();
+        return items.Select(NotificationChannelDto.FromEntity).ToList();
     }
 }

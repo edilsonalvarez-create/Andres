@@ -2,6 +2,7 @@ using FluentAssertions;
 using NSubstitute;
 using QAGuardian.Application.Abstractions.Persistence;
 using QAGuardian.Application.Abstractions.Services;
+using QAGuardian.Application.Features.Catalog;
 using QAGuardian.Application.Features.Projects;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
@@ -14,6 +15,7 @@ public class ProjectCommandsTests
     private readonly IProjectRepository _projects = Substitute.For<IProjectRepository>();
     private readonly IProjectAccessService _access = Substitute.For<IProjectAccessService>();
     private readonly IUnitOfWork _uow = Substitute.For<IUnitOfWork>();
+    private readonly ICacheService _cache = Substitute.For<ICacheService>();
 
     public ProjectCommandsTests()
     {
@@ -82,19 +84,22 @@ public class ProjectCommandsTests
         var project = new Project("ERP", "Nombre", null, null);
         _projects.GetWithModulesAsync(project.Id, Arg.Any<CancellationToken>()).Returns(project);
 
-        var handler = new AddModuleCommandHandler(_projects, _access, _uow);
+        var handler = new AddModuleCommandHandler(_projects, _access, _uow, _cache);
         var result = await handler.Handle(new AddModuleCommand(project.Id, "Autenticación", "login/logout"), default);
 
         result.IsSuccess.Should().BeTrue();
         result.Value!.Name.Should().Be("Autenticación");
         result.Value.Id.Should().NotBeEmpty();
+        // El listado cacheado de módulos debe invalidarse para que el nuevo módulo aparezca de inmediato.
+        await _cache.Received(1).RemoveAsync(
+            $"{GetModulesByProjectQueryHandler.CacheKeyPrefix}{project.Id}", Arg.Any<CancellationToken>());
     }
 
     [Fact]
     public async Task Agregar_modulo_a_proyecto_inexistente_lanza_NotFound()
     {
         _projects.GetWithModulesAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns((Project?)null);
-        var handler = new AddModuleCommandHandler(_projects, _access, _uow);
+        var handler = new AddModuleCommandHandler(_projects, _access, _uow, _cache);
 
         var act = () => handler.Handle(new AddModuleCommand(Guid.NewGuid(), "X", null), default);
 

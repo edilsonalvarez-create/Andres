@@ -18,7 +18,20 @@ internal static class RunnerSandboxPaths
         return Path.GetFileName(path);
     }
 
+    /// <summary>
+    /// Cita un argumento para <see cref="ProcessExecutor"/> / <c>docker run</c>
+    /// (UseShellExecute=false). Evita que espacios o comillas en valores controlados
+    /// por el usuario (p. ej. targetUrl ZAP) se partan en tokens adicionales.
+    /// </summary>
+    public static string QuoteArg(string value)
+    {
+        value ??= string.Empty;
+        if (value.Contains('"', StringComparison.Ordinal))
+            value = value.Replace("\"", "\\\"", StringComparison.Ordinal);
+        return $"\"{value}\"";
+    }
+
     public static string QuoteJoin(IEnumerable<string> paths, string workingDirectory, bool relative)
         => string.Join(' ', paths.Select(p =>
-            $"\"{(relative ? ToWorkspaceRelative(p, workingDirectory) : p)}\""));
+            QuoteArg(relative ? ToWorkspaceRelative(p, workingDirectory) : p)));
 }

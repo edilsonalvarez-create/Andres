@@ -7,7 +7,7 @@ import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import LinkIcon from "@mui/icons-material/Link";
 import { Link as RouterLink } from "react-router-dom";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import { loadProjectUserStories } from "../api/catalogStories";
 import ProjectSelect from "../components/ProjectSelect";
 import ScriptEditorDialog from "../components/ScriptEditorDialog";
@@ -74,8 +74,7 @@ export default function TestCasesPage() {
         : "Vínculo con historia eliminado.");
       load();
     } catch (err: unknown) {
-      setLinkError((err as { response?: { data?: { error?: string } } }).response?.data?.error
-        ?? "No fue posible vincular la historia de usuario.");
+      setLinkError(extractApiErrorMessage(err) ?? "No fue posible vincular la historia de usuario.");
     } finally {
       setLinkBusy(false);
     }

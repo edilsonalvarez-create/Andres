@@ -43,10 +43,14 @@ docker pull ghcr.io/<owner>/qaguardian-frontend:$SHA
 docker tag ghcr.io/<owner>/qaguardian-api:$SHA qaguardian-api:local-prod
 docker tag ghcr.io/<owner>/qaguardian-frontend:$SHA qaguardian-frontend:local-prod
 
-# 3. Aplicar el esquema ANTES de levantar la API (Sprint 16-A: migrate fuera del boot)
+# 3. Aplicar el esquema EF ANTES de levantar la API (Sprint 16-A: migrate fuera del boot)
 docker compose -f docker-compose.yml run --rm migrate
 
-# 4. (Solo primer deploy o si cambió el usuario de app) usuario SQL de mínimo privilegio
+# 4. Hangfire schema + usuario SQL least-privilege (Sprint 20-A / B5 + 16-B).
+#    db-init (sa) aplica en orden: 05-hangfire-schema.sql → 00-app-user.sql →
+#    00-app-user-hangfire.sql. Obligatorio en primer deploy y tras upgrades de
+#    Hangfire.SqlServer que cambien Install.sql. El API usa APP_DB_USER (no sa)
+#    y Hangfire:PrepareSchemaIfNecessary=false.
 docker compose -f docker-compose.yml run --rm db-init
 
 # 5. Arrancar sin publicar puertos de DB/Redis (Sprint 16-B; SIN docker-compose.override.yml)
@@ -56,6 +60,9 @@ docker compose -f docker-compose.yml up -d
 curl -fsS http://localhost:5080/health/ready
 curl -fsS http://localhost:5080/api/v1/version
 ```
+
+Si omite el paso 4 en un volumen SQL vacío, el API fallará al inicializar
+Hangfire.SqlServer (esquema `[HangFire]` ausente) — no hay auto-DDL en producción.
 
 `docker-compose.yml` compila `api`/`frontend` con `build:` a partir del código fuente. Si el
 host de producción no tiene el repo clonado (deploy solo por imagen), reemplace temporalmente

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using QAGuardian.Application.Abstractions.Services;
+using QAGuardian.Application.Common.Models;
 using QAGuardian.Domain.Enums;
 using QAGuardian.Infrastructure.Runners;
 using Xunit;
@@ -45,14 +46,22 @@ public class RunnerSandboxWiringTests
     }
 
     [Fact]
-    public async Task Zap_usa_PreferHostDockerCli_sin_anidar_imagen_newman()
+    public async Task Zap_usa_sandbox_con_imagen_oficial_sin_PreferHostDockerCli()
     {
         var exec = Substitute.For<ISandboxedProcessExecutor>();
         exec.UsesContainerSandbox.Returns(true);
         exec.RunAsync(Arg.Any<ScriptExecutionRequest>(), Arg.Any<CancellationToken>())
             .Returns(new ScriptExecutionResult(1, "", "fail", false, []));
 
-        var runner = new ZapScanRunner(exec);
+        var ssrf = Substitute.For<ISsrfGuard>();
+        ssrf.ValidateOutboundUri(Arg.Any<string?>())
+            .Returns(Result<Uri>.Success(new Uri("https://example.com/")));
+
+        var opts = Options.Create(new RunnerSandboxOptions
+        {
+            SandboxImageZap = "ghcr.io/zaproxy/zaproxy:stable"
+        });
+        var runner = new ZapScanRunner(exec, opts, ssrf);
         var work = Path.Combine(Path.GetTempPath(), "zap-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         try
@@ -65,9 +74,10 @@ public class RunnerSandboxWiringTests
 
             await exec.Received(1).RunAsync(
                 Arg.Is<ScriptExecutionRequest>(r =>
-                    r.PreferHostDockerCli
-                    && r.FileName == "docker"
-                    && r.Arguments.Contains("zaproxy", StringComparison.OrdinalIgnoreCase)),
+                    !r.PreferHostDockerCli
+                    && r.FileName == "zap-baseline.py"
+                    && r.ContainerImage == "ghcr.io/zaproxy/zaproxy:stable"
+                    && r.Arguments.Contains("-t \"https://example.com/\"", StringComparison.Ordinal)),
                 Arg.Any<CancellationToken>());
         }
         finally

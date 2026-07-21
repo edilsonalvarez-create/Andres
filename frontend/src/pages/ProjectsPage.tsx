@@ -6,7 +6,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import type { Paged, Project } from "../types";
 import DataTable, { type DataTableColumn } from "../components/DataTable";
 import EmptyState from "../components/EmptyState";
@@ -78,7 +78,7 @@ export default function ProjectsPage() {
       setEditingId(null);
       load();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { error?: string } } }).response?.data?.error;
+      const detail = extractApiErrorMessage(err);
       setError(detail ?? (editingId ? "No fue posible actualizar el proyecto." : "No fue posible crear el proyecto."));
     }
   };
@@ -92,7 +92,7 @@ export default function ProjectsPage() {
       await api.delete(`/projects/${target.id}`);
       load();
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { error?: string } } }).response?.data?.error;
+      const detail = extractApiErrorMessage(err);
       setError(detail ?? "No fue posible eliminar el proyecto.");
     }
   };

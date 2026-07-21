@@ -11,7 +11,7 @@ import AutorenewIcon from "@mui/icons-material/Autorenew";
 import BlockIcon from "@mui/icons-material/Block";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { Paged } from "../types";
 
@@ -73,7 +73,7 @@ export default function UsersPage() {
       setInfo("Usuario creado correctamente.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? "No fue posible crear el usuario.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible crear el usuario.");
     }
   };
 
@@ -84,7 +84,7 @@ export default function UsersPage() {
       setInfo(active ? "Usuario activado." : "Usuario desactivado.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? "No fue posible cambiar el estado.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible cambiar el estado.");
     }
   };
 
@@ -96,7 +96,7 @@ export default function UsersPage() {
       setInfo("Usuario eliminado.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? "No fue posible eliminar el usuario.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible eliminar el usuario.");
     }
   };
 
@@ -109,7 +109,7 @@ export default function UsersPage() {
       await api.post(`/admin/users/${resetUser.id}/reset-password`, { userId: resetUser.id, newPassword: resetPwd });
       setResetDone(true);
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? "No fue posible restablecer la contraseña.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible restablecer la contraseña.");
     }
   };
 
@@ -122,7 +122,7 @@ export default function UsersPage() {
       setInfo("Roles actualizados.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? "No fue posible actualizar los roles.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible actualizar los roles.");
     }
   };
 

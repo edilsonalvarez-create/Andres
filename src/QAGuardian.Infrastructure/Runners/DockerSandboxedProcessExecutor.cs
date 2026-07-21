@@ -39,8 +39,8 @@ public sealed class DockerSandboxedProcessExecutor : ISandboxedProcessExecutor
             throw new DirectoryNotFoundException(
                 $"WorkingDirectory inexistente: {request.WorkingDirectory}");
 
-        // ZAP (y similares): el script ya corre en contenedor oficial; solo orquestamos `docker`
-        // en el host sin heredar secretos del proceso API (sin anidar otro sandbox).
+        // PreferHostDockerCli: escape hatch legado (ZAP ya no lo usa; Sprint 19-A).
+        // Orquesta `docker` en el host sin anidar otro sandbox ni heredar secretos del API.
         if (request.PreferHostDockerCli)
             return await RunHostDockerCliAsync(request, ct);
 
@@ -135,11 +135,12 @@ public sealed class DockerSandboxedProcessExecutor : ISandboxedProcessExecutor
         string? image = null)
     {
         image ??= _options.SandboxImage;
+        var network = ResolveNetwork(_options.SandboxNetworkMode, _options.SandboxNetworkName);
         var sb = new StringBuilder();
         sb.Append("run --rm ");
         sb.Append("--name ").Append(Quote(containerName)).Append(' ');
         sb.Append("--user ").Append(Quote(_options.SandboxUser)).Append(' ');
-        sb.Append("--network ").Append(Quote(NormalizeNetwork(_options.SandboxNetworkMode))).Append(' ');
+        sb.Append("--network ").Append(Quote(network)).Append(' ');
         sb.Append("--workdir ").Append(Quote(containerWorkdir)).Append(' ');
         // Solo el workspace del TestRun — nunca /app del API ni .env
         sb.Append("-v ").Append(Quote($"{ToDockerPath(hostWorkdir)}:{containerWorkdir}")).Append(' ');
@@ -151,6 +152,12 @@ public sealed class DockerSandboxedProcessExecutor : ISandboxedProcessExecutor
 
         if (!string.IsNullOrWhiteSpace(_options.SandboxMemoryLimit))
             sb.Append("--memory ").Append(Quote(_options.SandboxMemoryLimit)).Append(' ');
+
+        if (!string.IsNullOrWhiteSpace(_options.SandboxCpus))
+            sb.Append("--cpus ").Append(Quote(_options.SandboxCpus)).Append(' ');
+
+        if (_options.SandboxPidsLimit is > 0)
+            sb.Append("--pids-limit ").Append(_options.SandboxPidsLimit.Value).Append(' ');
 
         foreach (var (key, value) in environment)
             sb.Append("-e ").Append(Quote($"{key}={value}")).Append(' ');
@@ -205,12 +212,33 @@ public sealed class DockerSandboxedProcessExecutor : ISandboxedProcessExecutor
         return full;
     }
 
-    private static string NormalizeNetwork(string? mode)
+    /// <summary>
+    /// Modos permitidos: <c>none</c> (default) o <c>bridge</c>.
+    /// <c>host</c> y cualquier otro valor → <see cref="InvalidOperationException"/> (Sprint 19-B / B8).
+    /// </summary>
+    internal static string NormalizeNetwork(string? mode)
     {
         if (string.IsNullOrWhiteSpace(mode))
             return "none";
         var m = mode.Trim().ToLowerInvariant();
-        return m is "none" or "bridge" or "host" ? m : "none";
+        if (m is "none" or "bridge")
+            return m;
+        throw new InvalidOperationException(
+            $"Runners:SandboxNetworkMode '{mode}' no permitido. " +
+            "Valores admitidos: none | bridge. El modo 'host' está vetado (Sprint 19-B / B8).");
+    }
+
+    /// <summary>
+    /// Resuelve el valor de <c>--network</c>: con mode <c>bridge</c> y
+    /// <paramref name="networkName"/> configurado, usa esa red Docker dedicada (gancho de egress).
+    /// </summary>
+    internal static string ResolveNetwork(string? mode, string? networkName)
+    {
+        var normalized = NormalizeNetwork(mode);
+        if (normalized == "bridge"
+            && !string.IsNullOrWhiteSpace(networkName))
+            return networkName.Trim();
+        return normalized;
     }
 
     private static string Quote(string value)

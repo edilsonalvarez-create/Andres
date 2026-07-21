@@ -5,7 +5,7 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import ProjectSelect from "../components/ProjectSelect";
 import DataTable, { type DataTableColumn } from "../components/DataTable";
@@ -79,10 +79,6 @@ const emptyForm = {
   version: "",
   stackTrace: "",
 };
-
-function apiError(err: unknown, fallback: string): string {
-  return (err as { response?: { data?: { error?: string } } }).response?.data?.error ?? fallback;
-}
 
 export default function DefectsPage() {
   const { auth, hasRole } = useAuth();
@@ -159,7 +155,7 @@ export default function DefectsPage() {
       setInfo("Defecto registrado.");
       load();
     } catch (err: unknown) {
-      setError(apiError(err, "No fue posible registrar el defecto."));
+      setError(extractApiErrorMessage(err) ?? "No fue posible registrar el defecto.");
     } finally {
       setBusy(false);
     }
@@ -198,7 +194,7 @@ export default function DefectsPage() {
       setInfo(`${defect.code}: estado → ${DEFECT_STATUS[targetStatus] ?? targetStatus}.`);
       load();
     } catch (err: unknown) {
-      setError(apiError(err, "No fue posible cambiar el estado del defecto."));
+      setError(extractApiErrorMessage(err) ?? "No fue posible cambiar el estado del defecto.");
     }
   };
 

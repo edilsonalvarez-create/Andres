@@ -13,6 +13,10 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="9.0.4" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="AspNetCore.HealthChecks.SqlServer" Version="9.0.0" />
+    <!-- Override de transitiva vulnerable (SignalR.StackExchangeRedis 9.0.4 -> MessagePack
+         2.5.187, 2 High + 9 Moderate, todas parcheadas en >=2.5.301). Se fija 2.5.302 (misma
+         serie 2.x, sin breaking changes de la 3.x). Pentest 2026-07-18. -->
+    <PackageReference Include="MessagePack" Version="2.5.302" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\QAGuardian.Infrastructure\QAGuardian.Infrastructure.csproj" />

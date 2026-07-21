@@ -6,6 +6,7 @@ using QAGuardian.Application.Common.Models;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
 using QAGuardian.Domain.Enums;
+using QAGuardian.Application.Features.Catalog;
 
 namespace QAGuardian.Application.Features.Projects;
 
@@ -174,13 +175,15 @@ public class AddModuleCommandHandler : IRequestHandler<AddModuleCommand, Result<
     private readonly IProjectRepository _projects;
     private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
+    private readonly ICacheService _cache;
 
     public AddModuleCommandHandler(
-        IProjectRepository projects, IProjectAccessService access, IUnitOfWork uow)
+        IProjectRepository projects, IProjectAccessService access, IUnitOfWork uow, ICacheService cache)
     {
         _projects = projects;
         _access = access;
         _uow = uow;
+        _cache = cache;
     }
 
     public async Task<Result<ModuleDto>> Handle(AddModuleCommand request, CancellationToken ct)
@@ -190,6 +193,9 @@ public class AddModuleCommandHandler : IRequestHandler<AddModuleCommand, Result<
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
         var module = project.AddModule(request.Name, request.Description);
         await _uow.SaveChangesAsync(ct);
+        // Único mutador de la colección de módulos (verificado): invalida el listado cacheado
+        // por GetModulesByProjectQueryHandler para que el nuevo módulo aparezca de inmediato.
+        await _cache.RemoveAsync($"{GetModulesByProjectQueryHandler.CacheKeyPrefix}{request.ProjectId}", ct);
         return Result<ModuleDto>.Success(new ModuleDto(module.Id, module.Name, module.Description));
     }
 }

@@ -61,8 +61,9 @@ public class NotificationDispatcher : INotificationDispatcher
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Fallo notificando por {Channel} a {Target}",
-                    channel.Channel, channel.Target);
+                _logger.LogWarning(ex,
+                    "Fallo notificando por canal {ChannelId} tipo {ChannelType}",
+                    channel.Id, channel.Channel);
             }
         }
     }
@@ -72,7 +73,8 @@ public class NotificationDispatcher : INotificationDispatcher
         var host = _configuration["Smtp:Host"];
         if (string.IsNullOrEmpty(host))
         {
-            _logger.LogInformation("SMTP no configurado; se omite el correo a {To}", to);
+            _logger.LogInformation(
+                "SMTP no configurado; se omite el correo del canal (destino no registrado en logs).");
             return;
         }
 

@@ -79,3 +79,13 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * Extrae el mensaje `{ error: string }` que la API expone en el body de una
+ * respuesta fallida. Devuelve `undefined` si la respuesta no tiene ese shape
+ * (red caída, error inesperado, etc.); el llamador decide su propio fallback
+ * con `extractApiErrorMessage(err) ?? "mensaje por defecto"`.
+ */
+export function extractApiErrorMessage(err: unknown): string | undefined {
+  return (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+}

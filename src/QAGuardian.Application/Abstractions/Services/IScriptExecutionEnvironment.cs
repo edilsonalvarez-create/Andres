@@ -58,12 +58,23 @@ public sealed class RunnerSandboxOptions
     /// <summary>Imagen JMeter non-root.</summary>
     public string SandboxImageJMeter { get; set; } = "qaguardian/runner-jmeter:local";
 
+    /// <summary>Imagen oficial OWASP ZAP (baseline). Override por request vía ContainerImage.</summary>
+    public string SandboxImageZap { get; set; } = "ghcr.io/zaproxy/zaproxy:stable";
+
     /// <summary>
-    /// Red del contenedor: <c>none</c> = sin egress (default seguro);
-    /// <c>bridge</c> = egress completo (solo si el script debe alcanzar APIs bajo prueba).
-    /// Allowlist de destinos queda para endurecimiento futuro.
+    /// Red del contenedor: solo <c>none</c> (default, sin egress) o <c>bridge</c> (opt-in).
+    /// <c>host</c> y cualquier otro valor se rechazan (Sprint 19-B / B8).
+    /// Con <c>bridge</c>, use <see cref="SandboxNetworkName"/> para una red Docker dedicada
+    /// (recomendación operativa de egress; no es un firewall de aplicación).
     /// </summary>
     public string SandboxNetworkMode { get; set; } = "none";
+
+    /// <summary>
+    /// Nombre opcional de red Docker cuando <see cref="SandboxNetworkMode"/> es <c>bridge</c>.
+    /// Si está vacío se usa <c>bridge</c>. Operación: crear la red con reglas de egress
+    /// (<c>docker network create …</c>) y apuntar aquí el nombre.
+    /// </summary>
+    public string? SandboxNetworkName { get; set; }
 
     /// <summary>Usuario no-root dentro del contenedor (uid:gid).</summary>
     public string SandboxUser { get; set; } = "1000:1000";
@@ -76,6 +87,12 @@ public sealed class RunnerSandboxOptions
 
     /// <summary>Límite de memoria del contenedor (ej. 512m). Vacío = sin --memory.</summary>
     public string? SandboxMemoryLimit { get; set; } = "512m";
+
+    /// <summary>Límite de CPUs del contenedor (ej. 1.0). Vacío = sin --cpus.</summary>
+    public string? SandboxCpus { get; set; } = "1.0";
+
+    /// <summary>Límite de procesos (PIDs) del contenedor. Null o ≤0 = sin --pids-limit.</summary>
+    public int? SandboxPidsLimit { get; set; } = 256;
 
     /// <summary>CLI Docker en el host/API (<c>docker</c> en PATH).</summary>
     public string DockerCli { get; set; } = "docker";

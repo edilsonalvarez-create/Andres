@@ -3,6 +3,8 @@
 Origen: Auditoría Final Sprint 10 (NO-GO enterprise).  
 Premisa: un ítem grande o un cluster cohesivo por sprint; Fase A se parte por riesgo y dependencia.
 
+**Cierre (2026-07-17):** re-auditoría independiente ejecutada → [Sprint-16-Reaudit.md](./Sprint-16-Reaudit.md). Score **7.2/10** (antes 4.5). Enterprise: NO-GO condicional (bloqueadores B1–B5); interno single-tenant: GO.
+
 **Prompts listos para IA (1 sesión = 1 prompt):** [AI-Prompts-Sprints-11-16.md](./AI-Prompts-Sprints-11-16.md)
 
 | Sprint | Nombre | Duración | Ítems | Objetivo de salida |

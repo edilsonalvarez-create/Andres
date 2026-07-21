@@ -407,12 +407,22 @@ public class JMeterTestRunner : ITestRunner
     }
 }
 
-/// <summary>Runner de OWASP ZAP: escaneo baseline vía Docker y parseo de alertas.</summary>
+/// <summary>Runner de OWASP ZAP: escaneo baseline vía sandbox Docker endurecido y parseo de alertas.</summary>
 public class ZapScanRunner : ITestRunner
 {
     private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
+    private readonly ISsrfGuard _ssrf;
 
-    public ZapScanRunner(ISandboxedProcessExecutor executor) => _executor = executor;
+    public ZapScanRunner(
+        ISandboxedProcessExecutor executor,
+        Microsoft.Extensions.Options.IOptions<RunnerSandboxOptions> options,
+        ISsrfGuard ssrf)
+    {
+        _executor = executor;
+        _options = options.Value;
+        _ssrf = ssrf;
+    }
 
     public AutomationFramework Framework => AutomationFramework.OwaspZap;
 
@@ -427,14 +437,33 @@ public class ZapScanRunner : ITestRunner
             return new RunnerOutcome(false, [], [], null,
                 "No se configuró la URL objetivo del escaneo de seguridad.");
 
+        // Sprint 19-A (B4): validar targetUrl ANTES de lanzar el contenedor (SSRF / metadata / privado).
+        // No hay allowlist de URLs de escaneo por proyecto; solo ISsrfGuard (+ AllowHttp/PrivateHosts globales).
+        var urlCheck = _ssrf.ValidateOutboundUri(targetUrl);
+        if (!urlCheck.IsSuccess)
+            return new RunnerOutcome(false, [], [], null,
+                $"URL objetivo de ZAP rechazada: {urlCheck.Error}");
+
+        var safeUrl = urlCheck.Value!.AbsoluteUri;
         var reportName = $"zap-{Guid.NewGuid():N}.json";
-        // PreferHostDockerCli: ZAP ya aísla en su imagen oficial; no anidar sandbox Newman/Playwright.
+        // argv separados + QuoteArg: la URL no puede inyectar flags en docker run.
+        var zapArgs =
+            $"-t {RunnerSandboxPaths.QuoteArg(safeUrl)} -J {RunnerSandboxPaths.QuoteArg(reportName)} -I";
+        var image = string.IsNullOrWhiteSpace(_options.SandboxImageZap)
+            ? "ghcr.io/zaproxy/zaproxy:stable"
+            : _options.SandboxImageZap;
+
+        // Sin PreferHostDockerCli: misma orquestación endurecida que Newman/Playwright/JMeter
+        // (--user, --cap-drop, --read-only, --security-opt, --memory, workspace efímero).
         var run = await _executor.RunAsync(new ScriptExecutionRequest(
-            context.TestRunId, "docker",
-            $"run --rm -v \"{context.WorkingDirectory}:/zap/wrk\" ghcr.io/zaproxy/zaproxy:stable " +
-            $"zap-baseline.py -t \"{targetUrl}\" -J {reportName} -I",
-            context.WorkingDirectory, TimeSpan.FromMinutes(45), null, [reportName],
-            PreferHostDockerCli: true), ct);
+            context.TestRunId,
+            "zap-baseline.py",
+            zapArgs,
+            context.WorkingDirectory,
+            TimeSpan.FromMinutes(45),
+            null,
+            [reportName],
+            ContainerImage: image), ct);
 
         var reportPath = Path.Combine(context.WorkingDirectory, reportName);
         if (!File.Exists(reportPath))
@@ -446,7 +475,7 @@ public class ZapScanRunner : ITestRunner
             new FileInfo(reportPath).Length);
         var critical = findings.Count(f => f.Risk >= RiskLevel.High);
 
-        var result = new RunnerResultItem(null, $"Escaneo de seguridad {targetUrl}",
+        var result = new RunnerResultItem(null, $"Escaneo de seguridad {safeUrl}",
             critical == 0 ? ResultStatus.Passed : ResultStatus.Failed, 0,
             critical == 0 ? null : $"{critical} hallazgos de riesgo alto o crítico.",
             null, JsonSerializer.Serialize(new { totalFindings = findings.Count, highOrCritical = critical }),

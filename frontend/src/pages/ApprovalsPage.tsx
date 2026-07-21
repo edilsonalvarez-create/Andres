@@ -5,7 +5,7 @@ import {
   TextField, Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
 import { useAuth } from "../auth/AuthContext";
 import type { Paged, ProjectVersion, TestCase } from "../types";
@@ -98,8 +98,7 @@ export default function ApprovalsPage() {
       setInfo(approve ? "Solicitud aprobada." : "Solicitud rechazada.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error
-        ?? "No fue posible decidir la solicitud.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible decidir la solicitud.");
     }
   };
 
@@ -134,8 +133,7 @@ export default function ApprovalsPage() {
       setInfo("Solicitud creada.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error
-        ?? "No fue posible crear la solicitud.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible crear la solicitud.");
     }
   };
 

@@ -294,19 +294,37 @@ public record GetModulesByProjectQuery(Guid ProjectId) : IRequest<IReadOnlyList<
 public class GetModulesByProjectQueryHandler
     : IRequestHandler<GetModulesByProjectQuery, IReadOnlyList<ModuleListDto>>
 {
+    /// <summary>Prefijo de clave de caché para el listado de módulos por proyecto.
+    /// Invalidada explícitamente por <see cref="AddModuleCommandHandler"/> al agregar un módulo
+    /// (es el único mutador de la colección de módulos en todo el código, verificado por grep) —
+    /// el TTL es solo una red de seguridad ante una escritura directa a BD que se saltara el comando.</summary>
+    public const string CacheKeyPrefix = "catalog:modules:";
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
+
     private readonly IRepository<Module> _modules;
     private readonly IProjectAccessService _access;
+    private readonly ICacheService _cache;
 
-    public GetModulesByProjectQueryHandler(IRepository<Module> modules, IProjectAccessService access)
+    public GetModulesByProjectQueryHandler(
+        IRepository<Module> modules, IProjectAccessService access, ICacheService cache)
     {
         _modules = modules;
         _access = access;
+        _cache = cache;
     }
 
     public async Task<IReadOnlyList<ModuleListDto>> Handle(GetModulesByProjectQuery request, CancellationToken ct)
     {
         await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
+
+        var cacheKey = $"{CacheKeyPrefix}{request.ProjectId}";
+        var cached = await _cache.GetAsync<List<ModuleListDto>>(cacheKey, ct);
+        if (cached is not null)
+            return cached;
+
         var items = await _modules.ListAsync(m => m.ProjectId == request.ProjectId && !m.IsDeleted, ct);
-        return items.Select(m => new ModuleListDto(m.Id, m.Name, m.Description)).ToList();
+        var dtos = items.Select(m => new ModuleListDto(m.Id, m.Name, m.Description)).ToList();
+        await _cache.SetAsync(cacheKey, dtos, CacheTtl, ct);
+        return dtos;
     }
 }

@@ -7,6 +7,7 @@ import ShieldIcon from "@mui/icons-material/Shield";
 import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import { useAuth } from "../auth/AuthContext";
+import { extractApiErrorMessage } from "../api/client";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -27,7 +28,7 @@ export default function LoginPage() {
     } catch (err: unknown) {
       // Mensaje genérico ante 401 (OWASP A07). Si la API no responde, orientar distinto.
       const status = (err as { response?: { status?: number; data?: { error?: string } } })?.response?.status;
-      const apiError = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      const apiError = extractApiErrorMessage(err);
       if (!status) {
         setError("No hay conexión con la API. Compruebe que el backend esté en http://localhost:5080.");
       } else if (apiError) {

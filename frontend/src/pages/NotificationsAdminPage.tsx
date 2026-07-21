@@ -5,7 +5,7 @@ import {
   TableContainer, TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
 
 const CHANNELS = [
@@ -28,7 +28,8 @@ interface Channel {
   id: string;
   projectId?: string | null;
   channel: number;
-  target: string;
+  targetHint?: string | null;
+  isConfigured: boolean;
   events: number;
   isEnabled: boolean;
 }
@@ -79,8 +80,7 @@ export default function NotificationsAdminPage() {
       setInfo("Canal guardado.");
       void load();
     } catch (err: unknown) {
-      setError((err as { response?: { data?: { error?: string } } }).response?.data?.error
-        ?? "No fue posible guardar el canal.");
+      setError(extractApiErrorMessage(err) ?? "No fue posible guardar el canal.");
     }
   };
 
@@ -119,7 +119,9 @@ export default function NotificationsAdminPage() {
               <TableRow key={c.id}>
                 <TableCell>{CHANNELS.find((x) => x.value === c.channel)?.label ?? c.channel}</TableCell>
                 <TableCell sx={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {c.target}
+                  {c.isConfigured
+                    ? (c.targetHint ?? "Configurado")
+                    : "—"}
                 </TableCell>
                 <TableCell>
                   {EVENT_FLAGS.filter((f) => (c.events & f.bit) === f.bit).map((f) => f.label).join(", ") || "—"}

@@ -47,7 +47,9 @@ public class RunnerSandboxSeamsTests
             SandboxImage = "qaguardian/runner-newman:local",
             SandboxNetworkMode = "none",
             SandboxUser = "1000:1000",
-            SandboxMemoryLimit = "512m"
+            SandboxMemoryLimit = "512m",
+            SandboxCpus = "1.0",
+            SandboxPidsLimit = 256
         });
         var filter = new LocalSandboxedProcessExecutor(
             new ProcessExecutor(NullLogger<ProcessExecutor>.Instance),
@@ -82,6 +84,9 @@ public class RunnerSandboxSeamsTests
             args.Should().Contain("--user \"1000:1000\"");
             args.Should().Contain("--read-only");
             args.Should().Contain("--cap-drop ALL");
+            args.Should().Contain("--memory \"512m\"");
+            args.Should().Contain("--cpus \"1.0\"");
+            args.Should().Contain("--pids-limit 256");
             args.Should().Contain("-v ");
             args.Should().Contain("/workspace");
             args.Should().NotContain("Jwt__SigningKey");
@@ -95,6 +100,32 @@ public class RunnerSandboxSeamsTests
         {
             try { Directory.Delete(workdir, true); } catch { /* ignore */ }
         }
+    }
+
+    [Fact]
+    public void NormalizeNetwork_default_none_y_host_rechazado()
+    {
+        DockerSandboxedProcessExecutor.NormalizeNetwork(null).Should().Be("none");
+        DockerSandboxedProcessExecutor.NormalizeNetwork("").Should().Be("none");
+        DockerSandboxedProcessExecutor.NormalizeNetwork("  ").Should().Be("none");
+        DockerSandboxedProcessExecutor.NormalizeNetwork("none").Should().Be("none");
+        DockerSandboxedProcessExecutor.NormalizeNetwork("bridge").Should().Be("bridge");
+
+        var actHost = () => DockerSandboxedProcessExecutor.NormalizeNetwork("host");
+        actHost.Should().Throw<InvalidOperationException>()
+            .WithMessage("*host*vetado*");
+
+        var actOther = () => DockerSandboxedProcessExecutor.NormalizeNetwork("container:foo");
+        actOther.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void ResolveNetwork_usa_SandboxNetworkName_solo_en_bridge()
+    {
+        DockerSandboxedProcessExecutor.ResolveNetwork("none", "qg-egress").Should().Be("none");
+        DockerSandboxedProcessExecutor.ResolveNetwork("bridge", null).Should().Be("bridge");
+        DockerSandboxedProcessExecutor.ResolveNetwork("bridge", "  qg-egress  ")
+            .Should().Be("qg-egress");
     }
 
     [Fact]

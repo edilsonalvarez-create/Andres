@@ -112,4 +112,45 @@ public class CatalogHandlerTests
         result.IsSuccess.Should().BeTrue();
         result.Value!.ReleasedAt.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task Listar_modulos_con_cache_hit_no_consulta_el_repositorio()
+    {
+        var modules = Substitute.For<IRepository<Module>>();
+        var cache = Substitute.For<ICacheService>();
+        var projectId = Guid.NewGuid();
+        var cached = new List<ModuleListDto> { new(Guid.NewGuid(), "Auth (cacheado)", null) };
+        cache.GetAsync<List<ModuleListDto>>(
+                $"{GetModulesByProjectQueryHandler.CacheKeyPrefix}{projectId}", Arg.Any<CancellationToken>())
+            .Returns(cached);
+
+        var handler = new GetModulesByProjectQueryHandler(modules, _access, cache);
+        var result = await handler.Handle(new GetModulesByProjectQuery(projectId), default);
+
+        result.Should().BeEquivalentTo(cached);
+        await modules.DidNotReceive().ListAsync(
+            Arg.Any<Expression<Func<Module, bool>>>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Listar_modulos_con_cache_miss_consulta_el_repositorio_y_puebla_la_cache()
+    {
+        var modules = Substitute.For<IRepository<Module>>();
+        var cache = Substitute.For<ICacheService>();
+        var projectId = Guid.NewGuid();
+        cache.GetAsync<List<ModuleListDto>>(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns((List<ModuleListDto>?)null);
+        var fromDb = new Module(projectId, "Auth", "login/logout");
+        modules.ListAsync(Arg.Any<Expression<Func<Module, bool>>>(), Arg.Any<CancellationToken>())
+            .Returns(new List<Module> { fromDb });
+
+        var handler = new GetModulesByProjectQueryHandler(modules, _access, cache);
+        var result = await handler.Handle(new GetModulesByProjectQuery(projectId), default);
+
+        result.Should().ContainSingle(m => m.Name == "Auth");
+        await cache.Received(1).SetAsync(
+            $"{GetModulesByProjectQueryHandler.CacheKeyPrefix}{projectId}",
+            Arg.Is<List<ModuleListDto>>(l => l.Count == 1),
+            Arg.Any<TimeSpan?>(), Arg.Any<CancellationToken>());
+    }
 }

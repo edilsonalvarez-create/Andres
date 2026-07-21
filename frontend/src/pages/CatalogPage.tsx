@@ -5,7 +5,7 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
-import { api } from "../api/client";
+import { api, extractApiErrorMessage } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
 
 interface Module { id: string; name: string; description?: string }
@@ -55,7 +55,7 @@ export default function CatalogPage() {
   useEffect(() => { loadStories(); }, [loadStories]);
 
   const showError = (err: unknown, fallback: string) =>
-    setMessage((err as { response?: { data?: { error?: string } } }).response?.data?.error ?? fallback);
+    setMessage(extractApiErrorMessage(err) ?? fallback);
 
   const createModule = async () => {
     try {

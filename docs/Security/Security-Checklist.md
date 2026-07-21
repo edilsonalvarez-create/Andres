@@ -124,17 +124,78 @@ secretos, o superficie de red.
       (solo Development: `localhost`, `127.0.0.1` en `appsettings.Development.json`).
       Producción debe dejar ambos arrays vacíos.
 
+## Sprint 18 — B2 / B3 / B7 (SQL allowlist, SSRF hops, EncryptionKey)
+
+- [x] **B2 — Allowlist SQL:** `ISqlHostGuard` / `SqlHostGuard` valida DataSource contra
+      `DatabaseValidation:AllowedSqlHosts` + criterio SSRF (metadata, RFC1918, loopback, ULA,
+      IP decimal, DNS a privadas). Fail-closed fuera de Development si la allowlist está vacía;
+      en Development vacía solo localhost. Cableado en Upsert de entornos
+      (`DatabaseValidationCommands`) y defensa en profundidad en `SqlServerSchemaValidator.CompareAsync`
+      antes de abrir `SqlConnection`. Tests: `SqlHostGuardTests`, `Sprint18SqlHostAllowlistTests`.
+- [x] **B3 — SSRF redirects + pin IP:** `SsrfHttpHandlerFactory` fija `AllowAutoRedirect=false` y
+      `ConnectCallback` con `ResolvePinnedAddress` (anti DNS-rebinding TOCTOU).
+      `SsrfOutboundHandler` revalida cada hop 3xx (máx. `MaxRedirectHops`). Named clients
+      Sonar + `"notifications"` usan el primary endurecido; `IntegrationConnectionTester` usa
+      `CreateClient("notifications")`. Tests: `SsrfOutboundHardeningTests`.
+- [x] **B7 — EncryptionKey + secretos UI:** fail-fast de `Security:EncryptionKey` (≥32) en
+      `Program.cs` y ctor de `AesTokenEncryptionService` (rechaza `null`/`""`/corta).
+      `launchSettings.json` sin secretos versionados. GET de canales con `TargetHint`
+      (`NotificationChannelDto.MaskTarget`); catch de `NotificationDispatcher` sin `Target` en logs.
+      Tests: `AesTokenEncryptionServiceTests`, `NotificationChannelDtoMaskingTests`.
+- [ ] **Residual B2:** hosts allowlisted pueden ser privados a propósito (operación); un Admin/
+      ManageProjects con allowlist mal configurada (`*.corp.local`) sigue pudiendo apuntar a
+      SQL internos. No hay ACL distinta por entorno.
+- [ ] **Residual B3:** pin de IP mitiga rebinding entre resolve y connect; no cubre commits
+      DNS posteriores ni clientes sin el factory (p. ej. `IGitHubClient` host fijo sin handler
+      SSRF — destino no configurable).
+- [ ] **Residual B7:** `PostJsonAsync` aún puede registrar la URL del webhook en warnings de
+      SSRF/status (no el catch de canal); rotar webhooks si aparecen en logs.
+
 ## Ejecución de scripts / RCE (Sprint 13)
 
 - [x] **13-C:** Runners de usuario (`Playwright`, `Newman`, `JMeter`, `SeleniumIde`, `Visual`,
       codegen) usan `ISandboxedProcessExecutor` — no `ProcessExecutor` directo en el host API.
 - [x] Fuera de Development: aunque `Runners:UseSandbox=false`, DI **fuerza** sandbox Docker
       (no fallback host). Development: fallback local + **warning** en log.
-- [x] ZAP: orquestación `docker` en host con `PreferHostDockerCli` (el escaneo corre en
-      imagen oficial ZAP, no en el proceso API).
-- [ ] **Residual RCE:** montaje de `docker.sock` en compose; red `bridge` sin allowlist de
-      destinos; imagen API aún instala Node/Playwright (legado); escape del daemon Docker =
-      compromiso del host. Mitigación futura: Docker remoto autenticado / gVisor / sin sock.
+- [x] ZAP (Sprint 19-A / B4 VERIFY): vía `ISandboxedProcessExecutor` + imagen oficial
+      (`SandboxImageZap` / `ghcr.io/zaproxy/zaproxy:stable`), sin `PreferHostDockerCli`;
+      `targetUrl` validado con `ISsrfGuard` y pasado como argv citado (no shell).
+      Tests: `ZapSandboxHardeningTests`, `RunnerSandboxWiringTests.Zap_usa_sandbox_*`.
+- [x] **17-A (B1):** el API ya **no** monta `docker.sock` ni usa `group_add`/`DOCKER_GID`; el
+      acceso al daemon pasa por `docker-socket-proxy` con allowlist (`CONTAINERS`/`IMAGES`/`POST`;
+      resto denegado) en red interna `docker-control`, vía `DOCKER_HOST` (ver ADR-012).
+- [x] **19-B (B8 VERIFY) — Límites de recursos y red sandbox:**
+      `DockerSandboxedProcessExecutor` aplica `--memory` / `--cpus` / `--pids-limit`
+      (`Runners:SandboxMemoryLimit` default `512m`, `SandboxCpus` default `1.0`,
+      `SandboxPidsLimit` default `256`).
+      `NormalizeNetwork` solo admite `none`|`bridge` (default `none`); **`host` vetado**
+      (`InvalidOperationException`). Cualquier otro valor también falla en configuración.
+      Tests: `RunnerSandboxSeamsTests` (asserts de flags + `NormalizeNetwork` host rechazado).
+- [x] **19-B — Modelo de red / egress (opt-in consciente):**
+  - `none` (default): sin egress — adecuado para la mayoría de runners.
+  - `bridge`: egress completo del contenedor (necesario p. ej. ZAP / APIs bajo prueba).
+    No hay firewall de aplicación en el código. Gancho operativo:
+    `Runners:SandboxNetworkName` — si está definido con mode `bridge`, se pasa a
+    `--network <nombre>` (red Docker dedicada creada por ops con reglas de egress /
+    `docker network create …`). Vacío → `--network bridge`.
+  - Documentar en el entorno: no usar `host`; preferir red dedicada acotada cuando se active
+    `bridge`.
+- [ ] **Residual B4:** no hay allowlist de URLs de escaneo ZAP por proyecto; solo
+      `ISsrfGuard` (+ `AllowHttp`/`AllowPrivateHosts` globales). Un actor con permiso de
+      lanzar security runs puede apuntar ZAP a cualquier URL pública permitida por SSRF.
+- [ ] **Residual B8 — workspace / cuota de disco:** el `WorkingDirectory` real del run es
+      `storage/evidence/runs/{runId}` (`FileEvidenceStorage.CreateRunDirectory`). La evidencia
+      vive en ese path; **no** se borra post-run (limpieza agresiva rompería downloads).
+      `IScriptExecutionEnvironment` / `storage/runner-workspaces` sí limpia al `Dispose`, pero
+      hoy no es el path de producción del Hangfire run. Riesgo: crecimiento de disco por runs
+      acumulados — mitigar con retención/ops (TTL o job de purge), no con delete inmediato
+      tras el runner.
+- [ ] **Residual RCE (mitigado, no cerrado):** la allowlist del proxy mantiene
+      `POST /containers/create`, que aún permite montar rutas del host desde un contenedor nuevo;
+      `bridge` sin allowlist de destinos a nivel app (solo gancho de red dedicada);
+      imagen API aún instala Node/Playwright (legado).
+      Cierre definitivo: sacar la orquestación del proceso API (agente/daemon remoto, Sprint 17-B)
+      o gVisor/Kata.
 
 ---
 

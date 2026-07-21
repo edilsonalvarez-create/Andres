@@ -13,7 +13,7 @@ vi.mock("axios", () => {
   };
 });
 
-import { getStoredAuth, storeAuth, refreshSession, logoutSession } from "./client";
+import { getStoredAuth, storeAuth, refreshSession, logoutSession, extractApiErrorMessage } from "./client";
 import type { AuthResponse } from "../types";
 
 const auth: AuthResponse = {
@@ -72,5 +72,30 @@ describe("api/client — almacenamiento de sesión", () => {
     await logoutSession().catch(() => {});
 
     expect(getStoredAuth()).toBeNull();
+  });
+});
+
+describe("extractApiErrorMessage", () => {
+  it("devuelve el mensaje cuando la respuesta trae { error }", () => {
+    const err = { response: { data: { error: "Título requerido." } } };
+    expect(extractApiErrorMessage(err)).toBe("Título requerido.");
+  });
+
+  it("devuelve undefined si no hay response (red caída)", () => {
+    expect(extractApiErrorMessage(new Error("network"))).toBeUndefined();
+  });
+
+  it("devuelve undefined si response no trae data", () => {
+    expect(extractApiErrorMessage({ response: {} })).toBeUndefined();
+  });
+
+  it("devuelve undefined si data no trae error", () => {
+    expect(extractApiErrorMessage({ response: { data: {} } })).toBeUndefined();
+  });
+
+  it("devuelve undefined para valores no relacionados con axios (null, string, number)", () => {
+    expect(extractApiErrorMessage(null)).toBeUndefined();
+    expect(extractApiErrorMessage("boom")).toBeUndefined();
+    expect(extractApiErrorMessage(42)).toBeUndefined();
   });
 });

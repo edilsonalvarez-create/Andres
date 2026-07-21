@@ -18,6 +18,7 @@ frontend/.vite/
 
 ## Secrets / entornos
 appsettings.*.Local.json
+**/Properties/launchSettings.Local.json
 .env
 .env.*
 !.env.example

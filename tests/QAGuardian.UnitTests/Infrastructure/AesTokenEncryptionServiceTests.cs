@@ -75,12 +75,38 @@ public class AesTokenEncryptionServiceTests
     public void Claves_distintas_no_pueden_descifrar_entre_si()
     {
         var serviceA = BuildService("clave-A-para-cifrado-de-32-bytes");
-        var serviceB = BuildService("clave-B-completamente-diferente");
+        var serviceB = BuildService("clave-B-completamente-diferente!");
 
         var cipherText = serviceA.Encrypt("secreto");
 
         var act = () => serviceB.Decrypt(cipherText);
 
         act.Should().Throw<AuthenticationTagMismatchException>();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Ctor_rechaza_clave_nula_vacia_o_solo_espacios(string? key)
+    {
+        var act = () => BuildService(key!);
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*Security:EncryptionKey*");
+    }
+
+    [Fact]
+    public void Ctor_rechaza_clave_mas_corta_de_32_caracteres()
+    {
+        var act = () => BuildService(new string('x', 31));
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*demasiado corta*");
+    }
+
+    [Fact]
+    public void Ctor_acepta_clave_de_32_caracteres()
+    {
+        var act = () => BuildService(new string('y', 32));
+        act.Should().NotThrow();
     }
 }

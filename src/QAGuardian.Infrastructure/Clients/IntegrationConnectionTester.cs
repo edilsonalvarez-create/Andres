@@ -8,6 +8,12 @@ namespace QAGuardian.Infrastructure.Clients;
 /// <summary>Prueba credenciales de integraciones externas antes de guardarlas (SonarQube, GitHub, ZAP).</summary>
 public class IntegrationConnectionTester : IIntegrationConnectionTester
 {
+    /// <summary>
+    /// Named client CON SsrfOutboundHandler + primary handler endurecido (B3).
+    /// Se reutiliza el registrado en DependencyInjection para no crear otro pipeline.
+    /// </summary>
+    internal const string SsrfGuardedClientName = "notifications";
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ISsrfGuard _ssrf;
     private readonly ILogger<IntegrationConnectionTester> _logger;
@@ -69,7 +75,7 @@ public class IntegrationConnectionTester : IIntegrationConnectionTester
         }
 
         var safeBase = check.Value!.ToString().TrimEnd('/');
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(SsrfGuardedClientName);
         var authHeader = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{token}:"));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authHeader);
 
@@ -89,7 +95,7 @@ public class IntegrationConnectionTester : IIntegrationConnectionTester
             return false;
 
         // Destino fijo de plataforma — no es BaseUrl de proyecto.
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient(SsrfGuardedClientName);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         client.DefaultRequestHeaders.UserAgent.ParseAdd("QAGuardian");
 

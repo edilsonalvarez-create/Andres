@@ -138,6 +138,71 @@ public sealed class SsrfGuard : ISsrfGuard
         return Result<Uri>.Success(uri);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Sprint 18-B (B3): mitiga DNS rebinding (TOCTOU). La IP devuelta debe usarse como
+    /// destino real de la conexión (<c>ConnectCallback</c> de <c>SocketsHttpHandler</c>)
+    /// para que no exista una segunda resolución divergente entre validar y conectar.
+    /// </remarks>
+    public Result<IPAddress> ResolvePinnedAddress(string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return Result<IPAddress>.Failure("El host de la conexión de salida es obligatorio.");
+
+        host = host.Trim();
+
+        if (IsBlockedHostName(host))
+            return Result<IPAddress>.Failure("Host de metadata cloud bloqueado (SSRF).");
+
+        var allowPrivate = _allowPrivateHosts.Contains(host);
+
+        if (TryParseHostAsIp(host, out var literalIp))
+        {
+            if (!allowPrivate && IsBlockedAddress(literalIp))
+                return FailBlockedPin(literalIp);
+            return Result<IPAddress>.Success(literalIp);
+        }
+
+        if (TryParseDecimalIpv4(host, out var decimalIp))
+        {
+            if (!allowPrivate && IsBlockedAddress(decimalIp))
+                return FailBlockedPin(decimalIp);
+            return Result<IPAddress>.Success(decimalIp);
+        }
+
+        IPAddress[] addresses;
+        try
+        {
+            addresses = _dns.GetAddresses(host);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "DNS falló para host {Host}", host);
+            return Result<IPAddress>.Failure("No se pudo resolver el host de la conexión de salida.");
+        }
+
+        if (addresses is null || addresses.Length == 0)
+            return Result<IPAddress>.Failure("El host de la conexión de salida no resolvió ninguna dirección.");
+
+        if (!allowPrivate)
+        {
+            foreach (var address in addresses)
+            {
+                if (IsBlockedAddress(address))
+                    return FailBlockedPin(address);
+            }
+        }
+
+        // Preferir IPv4 por compatibilidad; se fija UNA dirección ya validada.
+        var pinned = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+                     ?? addresses[0];
+        return Result<IPAddress>.Success(pinned);
+    }
+
+    private static Result<IPAddress> FailBlockedPin(IPAddress address)
+        => Result<IPAddress>.Failure(
+            $"El host de la conexión de salida resuelve a una dirección no permitida ({address}): red privada, loopback, link-local o metadata.");
+
     private static Result<Uri> FailBlockedIp(IPAddress address)
         => Result<Uri>.Failure(
             $"La URL de salida resuelve a una dirección no permitida ({address}): red privada, loopback, link-local o metadata.");

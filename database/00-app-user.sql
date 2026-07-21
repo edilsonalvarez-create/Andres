@@ -2,8 +2,13 @@
    QA Guardian — Usuario de aplicación de mínimo privilegio (SQL Server)
    Sprint 16-B, Ítem 13: el proceso API en Production/QA/Staging NUNCA debe
    conectarse con `sa`. Ejecute este script una vez, con una cuenta sysadmin
-   (sa / DBA), DESPUÉS de crear el esquema (01-schema.sql o
+   (sa / DBA), DESPUÉS de crear el esquema EF (01-schema.sql o
    `dotnet ef database update` / servicio compose `migrate`).
+
+   Sprint 20-A (B5): el esquema Hangfire se aplica aparte
+   (`05-hangfire-schema.sql`) y los permisos DML Hangfire en
+   `00-app-user-hangfire.sql` (tras este script). Orden compose db-init:
+   hangfire-schema → app-user → app-user-hangfire.
 
    Uso (sqlcmd):
      sqlcmd -S <server> -U sa -P "<sa-password>" -C \
@@ -11,8 +16,9 @@
        -i database/00-app-user.sql
    ============================================================================ */
 
-:setvar AppLogin "qaguardian_app"
-:setvar AppPassword "CAMBIAR_POR_UNA_CONTRASENA_UNICA"
+/* AppLogin / AppPassword: NO declarar :setvar — en mssql-tools18 un :setvar
+   pisa el -v de línea de comando. Obligatorio:
+     sqlcmd -v AppLogin="qaguardian_app" -v AppPassword="..." */
 
 USE master;
 GO

@@ -142,8 +142,13 @@ public static class DependencyInjection
         services.AddScoped<IntegrationSettingResolver>();
         services.AddTransient<SsrfOutboundHandler>();
         // SonarQube: BaseUrl configurable por proyecto → handler SSRF en cada request.
+        // Sprint 18-B (B3): AllowAutoRedirect=false + pin de IP anti-rebinding en el
+        // primary handler de TODOS los clients con SsrfOutboundHandler; los 3xx los
+        // sigue el propio handler revalidando cada hop.
         services.AddHttpClient<ISonarQubeClient, SonarQubeClient>()
             .AddHttpMessageHandler<SsrfOutboundHandler>()
+            .ConfigurePrimaryHttpMessageHandler(sp =>
+                SsrfHttpHandlerFactory.Create(sp.GetRequiredService<ISsrfGuard>()))
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
         // GitHub API host fijo (api.github.com); BaseUrl del setting es repo, no API.
         services.AddHttpClient<IGitHubClient, GitHubApiClient>()
@@ -151,6 +156,8 @@ public static class DependencyInjection
         // Webhooks Teams/Slack/Discord/Telegram → SsrfGuard en handler + NotificationDispatcher.
         services.AddHttpClient("notifications")
             .AddHttpMessageHandler<SsrfOutboundHandler>()
+            .ConfigurePrimaryHttpMessageHandler(sp =>
+                SsrfHttpHandlerFactory.Create(sp.GetRequiredService<ISsrfGuard>()))
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
         services.AddScoped<IIntegrationConnectionTester, IntegrationConnectionTester>();
         services.AddScoped<IDatabaseSchemaValidator, SqlServerSchemaValidator>();

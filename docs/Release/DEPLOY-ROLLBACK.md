@@ -65,10 +65,43 @@ Si omite el paso 4 en un volumen SQL vacío, el API fallará al inicializar
 Hangfire.SqlServer (esquema `[HangFire]` ausente) — no hay auto-DDL en producción.
 
 `docker-compose.yml` compila `api`/`frontend` con `build:` a partir del código fuente. Si el
-host de producción no tiene el repo clonado (deploy solo por imagen), reemplace temporalmente
-`build:` por `image: ghcr.io/<owner>/qaguardian-api:$SHA` (y equivalente para `frontend`) antes
-del paso 5, o use un `docker-compose.prod.yml` con esos `image:` explícitos — no versionado en
-este repo porque el nombre `<owner>` depende de dónde se publique.
+host de producción no tiene el repo clonado (deploy solo por imagen), use en su lugar
+`docker-compose.prod.yml` (Sprint 27, RR-003): mismo stack de soporte (sqlserver, redis,
+migrate, db-init, docker-socket-proxy), pero `api`/`frontend` usan `image:` de GHCR en vez de
+`build:`, parametrizado con `GITHUB_OWNER`/`TAG` (por eso no había un archivo fijo antes — el
+owner depende de dónde se publique).
+
+```bash
+# 1. Login al registro (una vez por host; usa un PAT con scope read:packages)
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <usuario> --password-stdin
+
+# 2. Definir el owner (EN MINÚSCULAS — GHCR lo exige, ver ci.yml) y el tag a desplegar
+export GITHUB_OWNER=<owner-en-minusculas>
+export TAG=<sha-del-commit-desplegado>
+
+# 3. Traer las imágenes recién publicadas por CI (usa .env para el resto de variables:
+#    SQL_SA_PASSWORD, APP_DB_PASSWORD, JWT_SIGNING_KEY, ENCRYPTION_KEY, ADMIN_PASSWORD)
+docker compose -f docker-compose.prod.yml pull
+
+# 4. Aplicar el esquema EF ANTES de levantar la API (Sprint 16-A: migrate fuera del boot)
+docker compose -f docker-compose.prod.yml run --rm migrate
+
+# 5. Hangfire schema + usuario SQL least-privilege (obligatorio en primer deploy y tras
+#    upgrades de Hangfire.SqlServer que cambien Install.sql)
+docker compose -f docker-compose.prod.yml run --rm db-init
+
+# 6. Arrancar (sin publicar puertos de DB/Redis — igual que docker-compose.yml)
+docker compose -f docker-compose.prod.yml up -d
+
+# 7. Verificar
+curl -fsS http://localhost:5080/health/ready
+curl -fsS http://localhost:5080/api/v1/version
+```
+
+`GITHUB_OWNER`, `TAG` y los secretos de aplicación (`JWT_SIGNING_KEY`, `ENCRYPTION_KEY`,
+`ADMIN_PASSWORD`, `SQL_SA_PASSWORD`, `APP_DB_PASSWORD`) son obligatorios con fail-fast: si
+falta alguno, `docker compose -f docker-compose.prod.yml config` (o `pull`/`up`) falla de
+inmediato con un mensaje explícito en vez de arrancar con un valor vacío.
 
 ## 3. Rollback
 
@@ -79,16 +112,14 @@ incompatible, o regresión funcional detectada en el smoke post-deploy
 ```bash
 # 1. Identificar el SHA/tag anterior conocido bueno (release notes, tags de Git, o
 #    "docker images" si ya se había desplegado antes en ese host)
-PREV_SHA=<sha-anterior-conocido-bueno>
+export GITHUB_OWNER=<owner-en-minusculas>
+export TAG=<sha-anterior-conocido-bueno>
 
 # 2. Detener el release roto (deja sqlserver/redis/volúmenes intactos)
-docker compose -f docker-compose.yml stop api frontend
+docker compose -f docker-compose.prod.yml stop api frontend
 
-# 3. Traer y re-etiquetar la imagen anterior
-docker pull ghcr.io/<owner>/qaguardian-api:$PREV_SHA
-docker pull ghcr.io/<owner>/qaguardian-frontend:$PREV_SHA
-docker tag ghcr.io/<owner>/qaguardian-api:$PREV_SHA qaguardian-api:local-prod
-docker tag ghcr.io/<owner>/qaguardian-frontend:$PREV_SHA qaguardian-frontend:local-prod
+# 3. Traer la imagen anterior (docker-compose.prod.yml ya apunta a $TAG)
+docker compose -f docker-compose.prod.yml pull api frontend
 
 # 4. Solo si el release roto aplicó una migración EF incompatible: restaurar backup de
 #    sqldata ANTES de levantar la API (una migración Down() no siempre es segura en prod
@@ -96,7 +127,7 @@ docker tag ghcr.io/<owner>/qaguardian-frontend:$PREV_SHA qaguardian-frontend:loc
 #    Ver GO-LIVE-CHECKLIST §0 (backup tomado antes del deploy).
 
 # 5. Reiniciar con la imagen anterior
-docker compose -f docker-compose.yml up -d api frontend
+docker compose -f docker-compose.prod.yml up -d api frontend
 
 # 6. Verificar y comunicar
 curl -fsS http://localhost:5080/health/ready

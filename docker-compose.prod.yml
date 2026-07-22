@@ -1,0 +1,178 @@
+# Sprint 27 (RR-003): despliegue en producción con las imágenes ya publicadas por
+# `deploy` en ci.yml (ghcr.io/<owner>/qaguardian-api:<sha>, qaguardian-frontend:<sha>),
+# en vez de `build:` local. Uso (ver docs/Release/DEPLOY-ROLLBACK.md):
+#
+#   export GITHUB_OWNER=<owner-en-minusculas>   # GHCR exige minusculas (ver ci.yml)
+#   export TAG=<sha-o-tag-a-desplegar>
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Archivo autocontenido (no se combina con docker-compose.yml ni con el override de
+# desarrollo): mismos servicios de soporte que la base, sin build: para api/frontend
+# y sin publicar 1433/6379. NO incluye TLS (ver docker-compose.tls.yml, prompt 27-B).
+name: qaguardian
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Defina SQL_SA_PASSWORD en .env}
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    image: mcr.microsoft.com/dotnet/sdk:9.0
+    working_dir: /src
+    volumes:
+      - .:/src
+    environment:
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=QAGuardian;User Id=sa;Password=${SQL_SA_PASSWORD};TrustServerCertificate=True"
+      Database__UseSqlite: "false"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -euo pipefail
+        dotnet tool restore
+        dotnet ef database update \
+          --project src/QAGuardian.Infrastructure/QAGuardian.Infrastructure.csproj \
+          --startup-project src/QAGuardian.API/QAGuardian.API.csproj \
+          --connection "$${ConnectionStrings__DefaultConnection}"
+
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    working_dir: /scripts
+    volumes:
+      - ./database:/scripts:ro
+    environment:
+      SQL_SA_PASSWORD: ${SQL_SA_PASSWORD:?Defina SQL_SA_PASSWORD en .env}
+      APP_DB_USER: ${APP_DB_USER:-qaguardian_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Defina APP_DB_PASSWORD en .env (usuario de aplicación, mínimo privilegio)}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    entrypoint: ["/bin/bash", "-lc"]
+    command:
+      - |
+        set -euo pipefail
+        set +H
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v HangFireSchema="HangFire" \
+          -i 05-hangfire-schema.sql
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v AppLogin="$$APP_DB_USER" \
+          -v AppPassword="$$APP_DB_PASSWORD" \
+          -i 00-app-user.sql
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v AppLogin="$$APP_DB_USER" \
+          -v HangFireSchema="HangFire" \
+          -i 00-app-user-hangfire.sql
+
+  docker-socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
+    environment:
+      CONTAINERS: "1"
+      IMAGES: "1"
+      POST: "1"
+      INFO: "0"
+      EXEC: "0"
+      SWARM: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      VOLUMES: "0"
+      NETWORKS: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SYSTEM: "0"
+      AUTH: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      DISTRIBUTION: "0"
+      SESSION: "0"
+      PING: "1"
+      VERSION: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - docker-control
+
+  api:
+    image: ghcr.io/${GITHUB_OWNER:?Defina GITHUB_OWNER (en minusculas) con el owner/organización de GHCR}/qaguardian-api:${TAG:?Defina TAG con el sha o tag de la imagen a desplegar}
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - default
+      - docker-control
+    environment:
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      Hangfire__PrepareSchemaIfNecessary: "false"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=QAGuardian;User Id=${APP_DB_USER:-qaguardian_app};Password=${APP_DB_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__Redis: "redis:6379"
+      Database__ApplyMigrationsOnStartup: "false"
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?Defina JWT_SIGNING_KEY en .env}
+      Security__EncryptionKey: ${ENCRYPTION_KEY:?Defina ENCRYPTION_KEY en .env}
+      Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
+      Seed__AdminEmail: ${ADMIN_EMAIL:-admin@qaguardian.local}
+      Seed__AdminPassword: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD en .env (contraseña única, no el valor de ejemplo)}
+      Cors__AllowedOrigins__0: ${CORS_ALLOWED_ORIGIN:-http://localhost:8081}
+      Runners__UseSandbox: ${RUNNERS_USE_SANDBOX:-true}
+      Runners__SandboxImage: ${RUNNERS_SANDBOX_IMAGE:-qaguardian/runner-newman:local}
+      Runners__SandboxImagePlaywright: ${RUNNERS_SANDBOX_IMAGE_PLAYWRIGHT:-qaguardian/runner-playwright:local}
+      Runners__SandboxImageJMeter: ${RUNNERS_SANDBOX_IMAGE_JMETER:-qaguardian/runner-jmeter:local}
+      Runners__SandboxNetworkMode: ${RUNNERS_SANDBOX_NETWORK:-none}
+    ports:
+      - "5080:8080"
+    volumes:
+      - evidence:/app/storage/evidence
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  frontend:
+    image: ghcr.io/${GITHUB_OWNER:?Defina GITHUB_OWNER (en minusculas) con el owner/organización de GHCR}/qaguardian-frontend:${TAG:?Defina TAG con el sha o tag de la imagen a desplegar}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+
+volumes:
+  sqldata:
+  evidence:
+
+networks:
+  default:
+  docker-control:
+    internal: true

@@ -61,6 +61,9 @@ docker compose up -d    # API en :5080, frontend en :8081
 docker compose --profile tools up -d   # agrega SonarQube (:9000) y ZAP (:8090)
 ```
 
+Producción (imágenes ya publicadas en GHCR por CI, sin `build:` local): use
+`docker-compose.prod.yml` — ver [Deploy & Rollback](docs/Release/DEPLOY-ROLLBACK.md).
+
 ## Verificación
 
 ```bash

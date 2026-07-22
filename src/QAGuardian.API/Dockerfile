@@ -27,14 +27,15 @@ RUN apt-get update \
 
 COPY --from=build /app/publish .
 
-# Cliente Docker (sin daemon): sandboxes efímeros vía docker.sock del host (Sprint 13-B).
+# Cliente Docker (sin daemon): lanza los sandboxes efímeros. Sprint 17-A (B1): ya NO
+# se comunica con /var/run/docker.sock montado, sino con `docker-socket-proxy` vía
+# DOCKER_HOST=tcp://... (allowlist de endpoints, red interna). Ver ADR-012.
 COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
 
 # Non-root (Sprint 16-B): mismo UID:GID que usan los contenedores sandbox
 # (Runners:SandboxUser=1000:1000), para no introducir un tercer identificador.
-# El acceso a /var/run/docker.sock montado desde el host sigue siendo un
-# privilegio residual (ver ADR-011) y puede requerir agregar el GID del grupo
-# "docker" del host vía `group_add` en compose si el socket no es accesible.
+# Sprint 17-A: el API ya no monta el socket ni requiere `group_add`/DOCKER_GID;
+# el acceso al daemon queda mediado por el proxy con allowlist (ver ADR-012).
 RUN groupadd --gid 1000 qaguardian \
     && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin qaguardian \
     && mkdir -p /app/storage/evidence /app/storage/runner-workspaces \

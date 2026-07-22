@@ -73,6 +73,46 @@ services:
           -v AppLogin="$$APP_DB_USER" AppPassword="$$APP_DB_PASSWORD" \
           -i 00-app-user.sql
 
+
+  # Sprint 17-A (B1): proxy con allowlist delante del daemon Docker. El API ya NO
+  # monta /var/run/docker.sock; lanza los sandboxes efímeros SOLO a través de este
+  # proxy, que expone únicamente los endpoints mínimos (contenedores + imágenes).
+  # NO publica puertos al host: solo es accesible en la red interna `docker-control`.
+  # ADVERTENCIA (ver ADR-012): no es aislamiento total - POST /containers/create aún
+  # permite montar rutas del host; el cierre definitivo es el agente/daemon remoto (17-B).
+  docker-socket-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.4.2
+    environment:
+      # Allowlist mínima para `docker run --rm` (create/start/attach/wait/logs/rm) + pull.
+      CONTAINERS: "1"
+      IMAGES: "1"
+      POST: "1"
+      # Todo lo demás denegado explícitamente (defensa en profundidad).
+      INFO: "0"
+      EXEC: "0"
+      SWARM: "0"
+      SECRETS: "0"
+      CONFIGS: "0"
+      VOLUMES: "0"
+      NETWORKS: "0"
+      SERVICES: "0"
+      TASKS: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SYSTEM: "0"
+      AUTH: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      DISTRIBUTION: "0"
+      SESSION: "0"
+      PING: "1"
+      VERSION: "1"
+    volumes:
+      # Solo lectura: el proxy media el acceso; el socket nunca llega al contenedor API.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - docker-control
   api:
     build:
       context: .
@@ -84,12 +124,16 @@ services:
         condition: service_healthy
       db-init:
         condition: service_completed_successfully
-    # Sprint 16-B: acceso a /var/run/docker.sock (residual, ver ADR-011) desde un
-    # usuario non-root requiere pertenecer al GID del grupo "docker" del host.
-    # Defina DOCKER_GID en .env (Linux: `getent group docker | cut -d: -f3`).
-    group_add:
-      - "${DOCKER_GID:-999}"
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - default
+      - docker-control
     environment:
+      # Sprint 17-A (B1): el CLI `docker` del API habla con el daemon SOLO vía el proxy
+      # con allowlist. El CLI hereda DOCKER_HOST del proceso API (ProcessExecutor añade
+      # sobre el entorno heredado; no lo resetea), así que no requiere cambios de código.
+      DOCKER_HOST: "tcp://docker-socket-proxy:2375"
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-QA}
       # Sprint 16-B: usuario de mínimo privilegio (sin DDL) — NO `sa`.
       ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=QAGuardian;User Id=${APP_DB_USER:-qaguardian_app};Password=${APP_DB_PASSWORD};TrustServerCertificate=True"
@@ -112,7 +156,6 @@ services:
       - "5080:8080"
     volumes:
       - evidence:/app/storage/evidence
-      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health/ready"]
       interval: 30s
@@ -151,3 +194,11 @@ volumes:
   sqldata:
   sonardata:
   evidence:
+
+networks:
+  # Red por defecto de compose (SQL Server, Redis, API, frontend).
+  default:
+  # Sprint 17-A: red aislada solo para el plano de control Docker (API <-> proxy).
+  # SQL/Redis/frontend NO están en esta red; el proxy no publica puertos al host.
+  docker-control:
+    internal: true

@@ -16,12 +16,33 @@
 ```bash
 git clone <repositorio> && cd QAGuardian
 dotnet build QAGuardian.sln
-dotnet test QAGuardian.sln            # verificación: 38 pruebas en verde
+dotnet test QAGuardian.sln            # verificación: 82 pruebas en verde
+```
+
+Antes del primer `dotnet run`, configure los secretos locales con `dotnet user-secrets`
+(nunca en `appsettings.Development.json`, que sí se versiona — OWASP A05:2025/A07:2025):
+
+```bash
+cd src/QAGuardian.API
+dotnet user-secrets set "Jwt:SigningKey" "genere-una-clave-aleatoria-de-al-menos-32-caracteres"
+dotnet user-secrets set "Security:EncryptionKey" "genere-otra-clave-aleatoria-para-cifrado-de-tokens"
+dotnet user-secrets set "Seed:AdminEmail" "admin@qaguardian.local"
+dotnet user-secrets set "Seed:AdminPassword" "elija-una-contraseña-unica-para-su-equipo"
 dotnet run --project src/QAGuardian.API
 ```
 
 El perfil `Development` usa **SQLite** y **Hangfire en memoria**: no necesita SQL Server
-ni Redis. La base se crea y siembra automáticamente (roles, admin, quality gate).
+ni Redis. Con `Database:ApplyMigrationsOnStartup=true` (solo Development): SQL Server aplica
+migraciones EF; SQLite usa `EnsureCreated` desde el modelo (las migraciones del repo son
+SQL Server y no se ejecutan tal cual en SQLite). Luego siembra roles/admin/quality gate. Si falta alguno de los cuatro
+secretos, el arranque falla con un mensaje explícito indicando cuál falta.
+
+**Helper Dev (recomendado si el SQLite venía de `EnsureCreated` pre–Sprint 16):**
+
+```powershell
+.\scripts\Update-DevDatabase.ps1          # estado del SQLite local
+.\scripts\Update-DevDatabase.ps1 -Reset   # borra qaguardian-dev.db; el siguiente run recrea esquema
+```
 
 Frontend:
 
@@ -35,31 +56,99 @@ npm run dev        # http://localhost:5173 con proxy hacia la API
 
 ```bash
 cp .env.example .env
-# Edite .env: SQL_SA_PASSWORD, JWT_SIGNING_KEY (>=32 chars), ENCRYPTION_KEY, ANTHROPIC_API_KEY
+# Edite .env: SQL_SA_PASSWORD, APP_DB_USER/APP_DB_PASSWORD, JWT_SIGNING_KEY (>=32 chars),
+# ENCRYPTION_KEY, ANTHROPIC_API_KEY
 docker compose up -d
 ```
+
+`docker compose up` carga automáticamente `docker-compose.override.yml`, que publica
+`1433`/`6379` al host **solo para depuración local** (SSMS, Redis Insight). El archivo
+base `docker-compose.yml` (usado en producción/CI, ver §4) no publica esos puertos.
 
 | Servicio | URL |
 |---|---|
 | Frontend | http://localhost:8081 |
 | API + Swagger | http://localhost:5080/swagger |
 | Hangfire (solo admins) | http://localhost:5080/hangfire |
-| SQL Server | localhost,1433 |
+| SQL Server | localhost,1433 (solo con `docker-compose.override.yml`, dev) |
+| `migrate` (one-shot) | aplica EF antes del API; sin puerto |
+| `db-init` (one-shot) | crea el usuario de mínimo privilegio (`database/00-app-user.sql`); sin puerto |
 | SonarQube (perfil `tools`) | http://localhost:9000 |
 | OWASP ZAP (perfil `tools`) | http://localhost:8090 |
 
+**Non-root (Sprint 16-B):** las imágenes `api` (usuario `qaguardian`, UID 1000) y
+`frontend` (`nginxinc/nginx-unprivileged`, UID 101) no ejecutan como root. El acceso de
+`api` a `/var/run/docker.sock` (necesario para lanzar sandboxes de runners, ver
+[ADR-011](Architecture/adr/ADR-011-runner-sandbox-seams.md)) sigue siendo un privilegio
+residual; si el contenedor no puede usar el socket, defina `DOCKER_GID` en `.env` con el
+GID del grupo `docker` del host (`getent group docker | cut -d: -f3` en Linux).
+
 ## 4. Instalación en producción
 
-1. **Base de datos** — dos rutas (elija una):
-   - **Migraciones EF Core (recomendada)**: en el primer arranque contra SQL Server, la
-     aplicación aplica automáticamente las migraciones de `src/QAGuardian.Infrastructure/Migrations`
-     (historial versionado en `__EFMigrationsHistory`). Nuevas migraciones:
-     `dotnet dotnet-ef migrations add <Nombre> --project src/QAGuardian.Infrastructure --startup-project src/QAGuardian.API`.
-   - **Scripts del DBA**: ejecute en orden `database/01-schema.sql`, `02-indexes-constraints.sql`
-     y `03-seed.sql` (el `04` es demo) y configure `Database__SkipInitialization=true`
-     para que la aplicación no intente migrar sobre un esquema ya creado.
-2. **Secretos**: configure por variables de entorno (nunca en appsettings):
-   - `ConnectionStrings__DefaultConnection`, `ConnectionStrings__Redis`
+0. **Compose sin puertos DB/Redis públicos**: despliegue solo con el archivo base
+   (sin `docker-compose.override.yml`, que es exclusivamente para desarrollo local):
+
+   ```bash
+   docker compose -f docker-compose.yml up -d
+   ```
+
+   `sqlserver` y `redis` quedan accesibles únicamente en la red interna de compose
+   (`api`, `migrate`, `db-init`). No exponga esos puertos en el host de producción.
+
+1. **Base de datos (fuente de verdad = migraciones EF)** — el proceso API en
+   Production/QA/Staging **no** ejecuta `MigrateAsync` ni `EnsureCreated` (guardia en
+   `Program.cs` + `Database:ApplyMigrationsOnStartup=false`). Aplique el esquema **antes**
+   de arrancar la API:
+
+   ```powershell
+   # Job / máquina de release (requiere .NET SDK + dotnet tool restore)
+   .\scripts\Migrate-Database.ps1 -ConnectionString "Server=...;Database=QAGuardian;User Id=...;Password=...;TrustServerCertificate=True"
+   ```
+
+   Equivalente:
+
+   ```bash
+   export ConnectionStrings__DefaultConnection='Server=...;Database=QAGuardian;...'
+   dotnet tool restore
+   dotnet ef database update \
+     --project src/QAGuardian.Infrastructure/QAGuardian.Infrastructure.csproj \
+     --startup-project src/QAGuardian.API/QAGuardian.API.csproj \
+     --connection "$ConnectionStrings__DefaultConnection"
+   ```
+
+   Con Docker Compose, el servicio `migrate` corre `dotnet ef database update` y la API
+   espera `service_completed_successfully` antes de arrancar (solo seed).
+
+   - **Scripts del DBA (alternativa)**: ejecute en orden `database/01-schema.sql`,
+     `02-indexes-constraints.sql` y `03-seed.sql` (el `04` es demo) y configure
+     `Database__SkipInitialization=true` para omitir también el seed del API.
+   - **Upgrade desde parches ad-hoc** (tablas Sprint 8/11/12 ya creadas por Ensure*):
+     si `database update` falla porque la tabla ya existe, baselinee el historial EF
+     (inserte en `__EFMigrationsHistory` el `MigrationId` pendiente que corresponda al
+     esquema ya presente) o restaure desde backup y re-aplique migraciones en vacío.
+   - Nuevas migraciones (desarrollo):
+     `dotnet ef migrations add <Nombre> --project src/QAGuardian.Infrastructure --startup-project src/QAGuardian.API`.
+
+1.b **SQL least-privilege (el proceso API nunca usa `sa`)**: tras aplicar el esquema,
+   ejecute `database/00-app-user.sql` con una cuenta sysadmin para crear un login de
+   aplicación con solo `db_datareader` + `db_datawriter` (sin DDL: la migración la aplica
+   una cuenta separada, nunca el API):
+
+   ```bash
+   sqlcmd -S <server> -U sa -P "<sa-password>" -C \
+     -v AppLogin="qaguardian_app" AppPassword="<contraseña-única>" \
+     -i database/00-app-user.sql
+   ```
+
+   Configure `ConnectionStrings__DefaultConnection` de la API con ese usuario (no `sa`).
+   Con Docker Compose, el servicio `db-init` automatiza este paso usando
+   `APP_DB_USER`/`APP_DB_PASSWORD` de `.env`.
+
+2. **Secretos**: configure por variables de entorno o archivos secretos montados
+   (`--env-file`, secret manager, Docker/Kubernetes secrets — nunca en appsettings ni
+   hardcodeados en la imagen):
+   - `ConnectionStrings__DefaultConnection` (usuario de mínimo privilegio, ver 1.b),
+     `ConnectionStrings__Redis`
    - `Jwt__SigningKey` (aleatoria, mínimo 32 caracteres)
    - `Security__EncryptionKey` (cifra los tokens de integraciones en reposo)
    - `Anthropic__ApiKey` (agente IA; opcional — sin ella opera en modo heurístico)
@@ -67,6 +156,7 @@ docker compose up -d
    - `Seed__AdminEmail` / `Seed__AdminPassword`
 3. **Ambientes**: `ASPNETCORE_ENVIRONMENT` ∈ `Development | QA | Staging | Production`.
    Cada uno tiene su `appsettings.{Ambiente}.json` con CORS y logging adecuados.
+   Fuera de Development, `Database__ApplyMigrationsOnStartup` se ignora (siempre false).
 4. **TLS**: termine HTTPS en el balanceador/nginx; la API emite cabeceras de seguridad.
 5. **Runners**: la imagen Docker de la API ya incluye Node, Playwright (Chromium) y Newman.
    Para ZAP se requiere acceso al daemon Docker o un ZAP remoto; para JMeter, el binario

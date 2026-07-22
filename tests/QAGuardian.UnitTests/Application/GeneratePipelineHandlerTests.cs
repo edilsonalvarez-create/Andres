@@ -1,6 +1,7 @@
 using FluentAssertions;
 using NSubstitute;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Application.Features.Integrations;
 using QAGuardian.Domain.Entities;
 using Xunit;
@@ -13,10 +14,13 @@ public class GeneratePipelineHandlerTests
     public async Task Genera_yaml_con_el_flujo_completo_y_los_datos_del_proyecto()
     {
         var projects = Substitute.For<IProjectRepository>();
+        var access = Substitute.For<IProjectAccessService>();
+        access.EnsureCanAccessProjectAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
         var project = new Project("ERP", "Sistema ERP", null, null);
         projects.GetByIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(project);
 
-        var result = await new GenerateGitHubActionsPipelineQueryHandler(projects)
+        var result = await new GenerateGitHubActionsPipelineQueryHandler(projects, access)
             .Handle(new GenerateGitHubActionsPipelineQuery(project.Id), default);
 
         result.FileName.Should().Be("qa-guardian-erp.yml");

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
   backend:
     name: Backend (build + tests)
@@ -44,17 +47,140 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm test -- --run
+      - name: Pruebas con piso de cobertura (gate de regresión, ver vite.config.ts)
+        run: npm run test:coverage
       - run: npm run build
+
+  # Sprint 16-C: humo E2E real contra la API en Development/SQLite (sin SQL Server/Redis).
+  # Solo frontend/e2e/smoke.spec.ts — critical-path.spec.ts es más lento/escribe datos y
+  # visual.spec.ts tiene snapshots generados en Windows (no reproducibles en ubuntu-latest).
+  e2e:
+    name: E2E smoke (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    timeout-minutes: 15
+    env:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://localhost:5080
+      # Credenciales de un solo uso, exclusivas de esta corrida de CI (SQLite efímera,
+      # sin datos reales). El guardia de Program.cs solo exige un valor "único" fuera del
+      # público documentado; nunca se usan en QA/Staging/Production.
+      Jwt__SigningKey: ci-e2e-signing-key-${{ github.run_id }}-${{ github.run_attempt }}
+      Security__EncryptionKey: ci-e2e-encryption-key-${{ github.run_id }}
+      Seed__AdminEmail: admin@qaguardian.local
+      Seed__AdminPassword: QaGuardian.2026!
+      E2E_EMAIL: admin@qaguardian.local
+      E2E_PASSWORD: QaGuardian.2026!
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependencias frontend + navegador Playwright
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Levantar la API (Development/SQLite, en segundo plano)
+        run: |
+          nohup dotnet run --project src/QAGuardian.API > api.log 2>&1 &
+          echo $! > api.pid
+      - name: Esperar a que la API responda /health/live
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:5080/health/live > /dev/null 2>&1; then
+              echo "API lista"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::La API no respondió a tiempo"; cat api.log; exit 1
+      - name: E2E smoke (Playwright)
+        working-directory: frontend
+        run: npx playwright test e2e/smoke.spec.ts
+      - name: Subir reporte Playwright (siempre)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report/
+            api.log
+          retention-days: 7
+      - name: Detener la API
+        if: always()
+        run: kill "$(cat api.pid)" 2>/dev/null || true
 
   docker:
     name: Imágenes Docker
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
+    needs: [backend, frontend, e2e]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    outputs:
+      api-tag: ${{ steps.tags.outputs.api-tag }}
+      frontend-tag: ${{ steps.tags.outputs.frontend-tag }}
     steps:
       - uses: actions/checkout@v4
+      - id: tags
+        # GHCR exige nombres en minúsculas; repository_owner puede tener mayúsculas.
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "api-tag=${{ env.REGISTRY }}/$OWNER_LC/qaguardian-api:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          echo "frontend-tag=${{ env.REGISTRY }}/$OWNER_LC/qaguardian-frontend:${{ github.sha }}" >> "$GITHUB_OUTPUT"
       - name: Build imagen API
-        run: docker build -f src/QAGuardian.API/Dockerfile -t qaguardian-api:${{ github.sha }} .
+        run: docker build -f src/QAGuardian.API/Dockerfile -t qaguardian-api:${{ github.sha }} -t ${{ steps.tags.outputs.api-tag }} .
       - name: Build imagen frontend
-        run: docker build -t qaguardian-frontend:${{ github.sha }} ./frontend
+        run: docker build -t qaguardian-frontend:${{ github.sha }} -t ${{ steps.tags.outputs.frontend-tag }} ./frontend
+      - name: Guardar imágenes como artefacto (para el job deploy)
+        run: |
+          docker save ${{ steps.tags.outputs.api-tag }} ${{ steps.tags.outputs.frontend-tag }} | gzip > images.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-images-${{ github.sha }}
+          path: images.tar.gz
+          retention-days: 7
+
+  # Sprint 16-C: "deploy" = publicar las imágenes ya construidas/probadas en GHCR con el
+  # SHA del commit (rollback = re-desplegar un tag anterior, ver docs/Release/DEPLOY-ROLLBACK.md).
+  # No hay un host de producción con acceso desde este repo; el `docker compose up -d` real
+  # en el servidor está documentado, no automatizado aquí.
+  deploy:
+    name: Deploy (publicar imágenes en GHCR)
+    runs-on: ubuntu-latest
+    needs: docker
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-images-${{ github.sha }}
+      - run: docker load -i images.tar.gz
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publicar tags (sha + latest)
+        run: |
+          API_TAG="${{ needs.docker.outputs.api-tag }}"
+          FRONTEND_TAG="${{ needs.docker.outputs.frontend-tag }}"
+          docker push "$API_TAG"
+          docker push "$FRONTEND_TAG"
+          docker tag "$API_TAG" "${API_TAG%:*}:latest"
+          docker tag "$FRONTEND_TAG" "${FRONTEND_TAG%:*}:latest"
+          docker push "${API_TAG%:*}:latest"
+          docker push "${FRONTEND_TAG%:*}:latest"
+      - name: Resumen
+        run: |
+          echo "Imágenes publicadas. Despliegue real (docker compose en el host) y" >> "$GITHUB_STEP_SUMMARY"
+          echo "procedimiento de rollback: docs/Release/DEPLOY-ROLLBACK.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: ${{ needs.docker.outputs.api-tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frontend: ${{ needs.docker.outputs.frontend-tag }}" >> "$GITHUB_STEP_SUMMARY"

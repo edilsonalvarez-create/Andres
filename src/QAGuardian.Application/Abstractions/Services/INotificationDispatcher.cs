@@ -27,7 +27,12 @@ public interface IRunProgressNotifier
 public interface IBackgroundJobScheduler
 {
     string EnqueueTestRunExecution(Guid testRunId);
-    string EnqueueDatabaseValidation(Guid validationRunId, string sourceConn, string targetConn);
+    /// <summary>
+    /// Encola validación de esquema. Args inspectables: runId + projectId + nombres de entorno.
+    /// Nunca connection strings (Sprint 12).
+    /// </summary>
+    string EnqueueDatabaseValidation(
+        Guid validationRunId, Guid projectId, string sourceEnvironment, string targetEnvironment);
 }
 
 /// <summary>Puerto: almacenamiento de evidencias y reportes.</summary>
@@ -51,4 +56,12 @@ public interface IReportGenerator
     /// <summary>Genera un reporte del dashboard ejecutivo (PDF o Excel).</summary>
     (byte[] Content, string ContentType, string FileName) GenerateDashboardReport(
         Features.Dashboard.DashboardDto stats, string title, ReportFormat format);
+
+    /// <summary>Obtiene la matriz de ejecución en DTO para visualización interactiva.</summary>
+    Task<QAGuardian.Application.Features.Reports.ExecutionMatrixDto> GetExecutionMatrixAsync(
+        Guid testRunId, CancellationToken ct = default);
+
+    /// <summary>Genera matriz de ejecución con filtros en Excel para un TestRun específico.</summary>
+    Task<(byte[] Content, string ContentType, string FileName)> GenerateExecutionMatrixReportAsync(
+        Guid testRunId, CancellationToken ct = default);
 }

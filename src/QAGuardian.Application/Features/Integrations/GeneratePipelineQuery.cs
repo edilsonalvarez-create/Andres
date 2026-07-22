@@ -1,5 +1,6 @@
 using MediatR;
 using QAGuardian.Application.Abstractions.Persistence;
+using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
 
@@ -18,11 +19,18 @@ public class GenerateGitHubActionsPipelineQueryHandler
     : IRequestHandler<GenerateGitHubActionsPipelineQuery, GeneratedPipelineDto>
 {
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
 
-    public GenerateGitHubActionsPipelineQueryHandler(IProjectRepository projects) => _projects = projects;
+    public GenerateGitHubActionsPipelineQueryHandler(
+        IProjectRepository projects, IProjectAccessService access)
+    {
+        _projects = projects;
+        _access = access;
+    }
 
     public async Task<GeneratedPipelineDto> Handle(GenerateGitHubActionsPipelineQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 

@@ -1,7 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Alert, Box, Button, Card, CardContent, TextField, Typography } from "@mui/material";
+import {
+  Alert, Box, Button, Card, CardContent, IconButton, InputAdornment, TextField, Typography,
+} from "@mui/material";
 import ShieldIcon from "@mui/icons-material/Shield";
+import Visibility from "@mui/icons-material/Visibility";
+import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import { useAuth } from "../auth/AuthContext";
 
 export default function LoginPage() {
@@ -9,6 +13,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -19,8 +24,17 @@ export default function LoginPage() {
     try {
       await login(email, password);
       navigate("/");
-    } catch {
-      setError("Credenciales inválidas o cuenta bloqueada.");
+    } catch (err: unknown) {
+      // Mensaje genérico ante 401 (OWASP A07). Si la API no responde, orientar distinto.
+      const status = (err as { response?: { status?: number; data?: { error?: string } } })?.response?.status;
+      const apiError = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      if (!status) {
+        setError("No hay conexión con la API. Compruebe que el backend esté en http://localhost:5080.");
+      } else if (apiError) {
+        setError(apiError);
+      } else {
+        setError("Credenciales inválidas o cuenta bloqueada. Si el problema persiste, contacte a su administrador.");
+      }
     } finally {
       setLoading(false);
     }
@@ -39,8 +53,12 @@ export default function LoginPage() {
               Quality Gate empresarial para sus despliegues
             </Typography>
           </Box>
-          {error && <Alert severity="error">{error}</Alert>}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {error && (
+            <Alert severity="error" role="alert" aria-live="assertive">
+              {error}
+            </Alert>
+          )}
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
             <TextField
               label="Correo electrónico"
               type="email"
@@ -49,14 +67,31 @@ export default function LoginPage() {
               required
               fullWidth
               autoFocus
+              autoComplete="email"
             />
             <TextField
               label="Contraseña"
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               fullWidth
+              autoComplete="current-password"
+              slotProps={{
+                input: {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+                        onClick={() => setShowPassword((s) => !s)}
+                        edge="end"
+                      >
+                        {showPassword ? <VisibilityOff /> : <Visibility />}
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                },
+              }}
             />
             <Button type="submit" variant="contained" size="large" disabled={loading}>
               {loading ? "Verificando…" : "Iniciar sesión"}

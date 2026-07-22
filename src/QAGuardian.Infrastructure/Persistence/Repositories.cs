@@ -101,21 +101,38 @@ public class TestRunRepository : Repository<TestRun>, ITestRunRepository
               .Where(r => r.ProjectId == projectId && !r.IsDeleted)
               .OrderByDescending(r => r.CreatedAt).Take(count).ToListAsync(ct);
 
-    public async Task<(List<TestRun> Items, int Total)> PagedWithDetailsAsync(int page, int pageSize,
-        Guid projectId, CancellationToken ct = default)
+    public async Task<(IReadOnlyList<TestRunListSummary> Items, int Total)> PagedSummaryAsync(
+        int page, int pageSize, Guid projectId, CancellationToken ct = default)
     {
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
-        var query = Set.Where(r => r.ProjectId == projectId && !r.IsDeleted);
+        var query = Set.AsNoTracking().Where(r => r.ProjectId == projectId && !r.IsDeleted);
         var total = await query.CountAsync(ct);
+
+        // Conteos con subconsultas SQL — no se materializan entidades TestResult.
         var items = await query
             .OrderByDescending(r => r.CreatedAt)
             .Skip((page - 1) * pageSize).Take(pageSize)
-            .AsNoTracking()
-            .Include(r => r.Results)
-            .Include(r => r.GateEvaluation)
-            .AsSplitQuery()
+            .Select(r => new TestRunListSummary(
+                r.Id,
+                r.ProjectId,
+                r.RunType,
+                r.Environment,
+                r.Status,
+                r.TriggeredBy,
+                r.CommitSha,
+                r.PullRequestNumber,
+                r.StartedAt,
+                r.CompletedAt,
+                r.Results.Count(),
+                r.Results.Count(x => x.Status == ResultStatus.Passed),
+                r.Results.Count(x => x.Status == ResultStatus.Failed),
+                r.Results.Count(x => x.Status == ResultStatus.Skipped),
+                r.GateEvaluation != null ? r.GateEvaluation.Status : null,
+                r.GateEvaluation != null ? r.GateEvaluation.DeploymentApproved : null,
+                r.ErrorMessage))
             .ToListAsync(ct);
+
         return (items, total);
     }
 }
@@ -184,6 +201,50 @@ public class QualityGateRepository : Repository<QualityGate>, IQualityGateReposi
               .Include(g => g.Conditions)
               .AsSplitQuery()
               .ToListAsync(ct);
+}
+
+public class ProjectMemberRepository : Repository<ProjectMember>, IProjectMemberRepository
+{
+    public ProjectMemberRepository(QAGuardianDbContext context) : base(context) { }
+
+    public Task<ProjectMember?> GetAsync(Guid projectId, Guid userId, CancellationToken ct = default)
+        => Set.FirstOrDefaultAsync(
+            m => m.ProjectId == projectId && m.UserId == userId && !m.IsDeleted, ct);
+
+    public Task<List<ProjectMember>> ListByProjectAsync(Guid projectId, CancellationToken ct = default)
+        => Set.AsNoTracking()
+            .Where(m => m.ProjectId == projectId && !m.IsDeleted)
+            .ToListAsync(ct);
+
+    public Task<List<ProjectMember>> ListByUserAsync(Guid userId, CancellationToken ct = default)
+        => Set.AsNoTracking()
+            .Where(m => m.UserId == userId && !m.IsDeleted)
+            .ToListAsync(ct);
+
+    public Task<bool> IsActiveMemberAsync(Guid projectId, Guid userId, CancellationToken ct = default)
+        => Set.AnyAsync(
+            m => m.ProjectId == projectId && m.UserId == userId && m.IsActive && !m.IsDeleted, ct);
+}
+
+public class ProjectDatabaseEnvironmentRepository
+    : Repository<ProjectDatabaseEnvironment>, IProjectDatabaseEnvironmentRepository
+{
+    public ProjectDatabaseEnvironmentRepository(QAGuardianDbContext context) : base(context) { }
+
+    public Task<ProjectDatabaseEnvironment?> GetByNameAsync(
+        Guid projectId, string name, CancellationToken ct = default)
+    {
+        var normalized = ProjectDatabaseEnvironment.NormalizeName(name);
+        return Set.FirstOrDefaultAsync(
+            e => e.ProjectId == projectId && e.Name == normalized && !e.IsDeleted, ct);
+    }
+
+    public Task<List<ProjectDatabaseEnvironment>> ListActiveByProjectAsync(
+        Guid projectId, CancellationToken ct = default)
+        => Set.AsNoTracking()
+            .Where(e => e.ProjectId == projectId && e.IsActive && !e.IsDeleted)
+            .OrderBy(e => e.Name)
+            .ToListAsync(ct);
 }
 
 /// <summary>Unidad de trabajo: delega en el DbContext compartido por los repositorios.</summary>

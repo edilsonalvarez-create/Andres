@@ -24,6 +24,12 @@ public class TestRunsController : ApiControllerBase
         return Ok(new { run, results });
     }
 
+    /// <summary>Diagnósticos IA persistidos de los fallos de la ejecución (sin re-invocar el LLM).</summary>
+    [HttpGet("{id:guid}/ai-analysis")]
+    [Authorize(Policy = Policies.ViewReports)]
+    public async Task<IActionResult> GetAiAnalysis(Guid id, CancellationToken ct)
+        => Ok(await Mediator.Send(new GetAiAnalysisForTestRunQuery(id), ct));
+
     /// <summary>Inicia una nueva ejecución de pruebas (se procesa en segundo plano).</summary>
     [HttpPost]
     [Authorize(Policy = Policies.ExecuteTests)]
@@ -40,8 +46,10 @@ public class TestRunsController : ApiControllerBase
     [HttpGet("{id:guid}/report")]
     [Authorize(Policy = Policies.ViewReports)]
     public async Task<IActionResult> DownloadReport(Guid id, [FromQuery] ReportFormat format,
-        [FromServices] IReportGenerator generator, CancellationToken ct)
+        [FromServices] IReportGenerator generator, [FromServices] IProjectAccessService access,
+        CancellationToken ct)
     {
+        await access.EnsureCanAccessTestRunAsync(id, ct);
         var (content, contentType, fileName) = await generator.GenerateRunReportAsync(id, format, ct);
         return File(content, contentType, fileName);
     }
@@ -50,8 +58,10 @@ public class TestRunsController : ApiControllerBase
     [HttpGet("{id:guid}/execution-matrix/json")]
     [Authorize(Policy = Policies.ViewReports)]
     public async Task<IActionResult> GetExecutionMatrixJson(Guid id,
-        [FromServices] IReportGenerator generator, CancellationToken ct)
+        [FromServices] IReportGenerator generator, [FromServices] IProjectAccessService access,
+        CancellationToken ct)
     {
+        await access.EnsureCanAccessTestRunAsync(id, ct);
         var matrix = await generator.GetExecutionMatrixAsync(id, ct);
         return Ok(matrix);
     }
@@ -60,20 +70,34 @@ public class TestRunsController : ApiControllerBase
     [HttpGet("{id:guid}/execution-matrix")]
     [Authorize(Policy = Policies.ViewReports)]
     public async Task<IActionResult> DownloadExecutionMatrix(Guid id,
-        [FromServices] IReportGenerator generator, CancellationToken ct)
+        [FromServices] IReportGenerator generator, [FromServices] IProjectAccessService access,
+        CancellationToken ct)
     {
+        await access.EnsureCanAccessTestRunAsync(id, ct);
         var (content, contentType, fileName) = await generator.GenerateExecutionMatrixReportAsync(id, ct);
         return File(content, contentType, fileName);
     }
 
-    /// <summary>Descarga una evidencia (screenshot, video, log) validando ownership del test run
-    /// y previniendo path traversal.</summary>
+    /// <summary>Descarga una evidencia por Id (preferido). ACL + ownership Evidence↔Run.</summary>
+    [HttpGet("{id:guid}/evidence/{evidenceId:guid}")]
+    [Authorize(Policy = Policies.ViewReports)]
+    public async Task<IActionResult> DownloadEvidenceById(Guid id, Guid evidenceId, CancellationToken ct)
+    {
+        var result = await Mediator.Send(new DownloadEvidenceQuery(id, evidenceId), ct);
+        return File(result.Content, result.ContentType, result.FileName);
+    }
+
+    /// <summary>
+    /// Legacy: descarga por path solo si el path pertenece a una Evidence del TestRun.
+    /// Preferir <see cref="DownloadEvidenceById"/>.
+    /// </summary>
     [HttpGet("evidence")]
     [Authorize(Policy = Policies.ViewReports)]
     public async Task<IActionResult> DownloadEvidence(
-        [FromQuery] string path, [FromQuery] Guid testRunId, CancellationToken ct)
+        [FromQuery] Guid testRunId, [FromQuery] string? path, [FromQuery] Guid? evidenceId,
+        CancellationToken ct)
     {
-        var result = await Mediator.Send(new DownloadEvidenceQuery(testRunId, path), ct);
+        var result = await Mediator.Send(new DownloadEvidenceQuery(testRunId, evidenceId, path), ct);
         return File(result.Content, result.ContentType, result.FileName);
     }
 }

@@ -12,12 +12,18 @@ public class SonarQubeClient : ISonarQubeClient
 {
     private readonly HttpClient _http;
     private readonly IntegrationSettingResolver _resolver;
+    private readonly ISsrfGuard _ssrf;
     private readonly ILogger<SonarQubeClient> _logger;
 
-    public SonarQubeClient(HttpClient http, IntegrationSettingResolver resolver, ILogger<SonarQubeClient> logger)
+    public SonarQubeClient(
+        HttpClient http,
+        IntegrationSettingResolver resolver,
+        ISsrfGuard ssrf,
+        ILogger<SonarQubeClient> logger)
     {
         _http = http;
         _resolver = resolver;
+        _ssrf = ssrf;
         _logger = logger;
     }
 
@@ -30,6 +36,16 @@ public class SonarQubeClient : ISonarQubeClient
             return null;
         }
 
+        var baseCheck = _ssrf.ValidateOutboundUri(integration.BaseUrl);
+        if (!baseCheck.IsSuccess)
+        {
+            _logger.LogWarning("BaseUrl SonarQube bloqueada por SSRF para {ProjectId}: {Reason}",
+                projectId, baseCheck.Error);
+            return null;
+        }
+
+        var safeBase = baseCheck.Value!.ToString().TrimEnd('/');
+
         var key = string.IsNullOrEmpty(projectKey)
             ? integration.Extra.GetValueOrDefault("projectKey", "")
             : projectKey;
@@ -37,7 +53,7 @@ public class SonarQubeClient : ISonarQubeClient
 
         const string metricKeys = "coverage,duplicated_lines_density,bugs,vulnerabilities,security_hotspots,code_smells";
         using var request = new HttpRequestMessage(HttpMethod.Get,
-            $"{integration.BaseUrl}/api/measures/component?component={Uri.EscapeDataString(key)}&metricKeys={metricKeys}");
+            $"{safeBase}/api/measures/component?component={Uri.EscapeDataString(key)}&metricKeys={metricKeys}");
         AddAuth(request, integration.Token);
 
         using var response = await _http.SendAsync(request, ct);
@@ -54,7 +70,7 @@ public class SonarQubeClient : ISonarQubeClient
             values[measure.GetProperty("metric").GetString()!] =
                 measure.TryGetProperty("value", out var v) ? v.GetString() ?? "0" : "0";
 
-        var gateStatus = await GetQualityGateStatusAsync(integration, key, ct);
+        var gateStatus = await GetQualityGateStatusAsync(safeBase, integration.Token, key, ct);
 
         return new SonarMetricsDto(
             key,
@@ -67,13 +83,14 @@ public class SonarQubeClient : ISonarQubeClient
             gateStatus);
     }
 
-    private async Task<string> GetQualityGateStatusAsync(ResolvedIntegration integration, string key, CancellationToken ct)
+    private async Task<string> GetQualityGateStatusAsync(
+        string safeBase, string? token, string key, CancellationToken ct)
     {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get,
-                $"{integration.BaseUrl}/api/qualitygates/project_status?projectKey={Uri.EscapeDataString(key)}");
-            AddAuth(request, integration.Token);
+                $"{safeBase}/api/qualitygates/project_status?projectKey={Uri.EscapeDataString(key)}");
+            AddAuth(request, token);
             using var response = await _http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode) return "UNKNOWN";
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));

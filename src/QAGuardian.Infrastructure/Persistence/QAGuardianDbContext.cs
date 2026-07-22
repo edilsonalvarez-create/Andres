@@ -52,6 +52,8 @@ public class QAGuardianDbContext : DbContext
     public DbSet<IntegrationSetting> IntegrationSettings => Set<IntegrationSetting>();
     public DbSet<VisualBaseline> VisualBaselines => Set<VisualBaseline>();
     public DbSet<ApprovalRequest> ApprovalRequests => Set<ApprovalRequest>();
+    public DbSet<ProjectMember> ProjectMembers => Set<ProjectMember>();
+    public DbSet<ProjectDatabaseEnvironment> ProjectDatabaseEnvironments => Set<ProjectDatabaseEnvironment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -110,6 +112,7 @@ public class QAGuardianDbContext : DbContext
             e.Property(t => t.Tags).HasMaxLength(500);
             e.HasIndex(t => t.ProjectId);
             e.HasIndex(t => t.Type);
+            e.HasIndex(t => t.UserStoryId);
             e.HasMany(t => t.Steps).WithOne().HasForeignKey(s => s.TestCaseId)
                 .OnDelete(DeleteBehavior.Cascade);
             var nav = e.Metadata.FindNavigation(nameof(TestCase.Steps));
@@ -150,6 +153,7 @@ public class QAGuardianDbContext : DbContext
             e.Property(r => r.Name).HasMaxLength(500).IsRequired();
             e.HasIndex(r => r.TestRunId);
             e.HasIndex(r => r.Status);
+            e.HasIndex(r => r.TestCaseId);
             e.HasMany(r => r.Evidences).WithOne().HasForeignKey(ev => ev.TestResultId)
                 .OnDelete(DeleteBehavior.Cascade);
             var nav = e.Metadata.FindNavigation(nameof(TestResult.Evidences));
@@ -215,6 +219,7 @@ public class QAGuardianDbContext : DbContext
             e.Property(a => a.SuggestedOwnerRole).HasMaxLength(50);
             e.Property(a => a.ModelUsed).HasMaxLength(100);
             e.Property(a => a.EstimatedHours).HasPrecision(8, 2);
+            e.Property(a => a.EvidenceQuote).HasMaxLength(2000);
             e.HasIndex(a => a.TestResultId);
         });
 
@@ -307,6 +312,24 @@ public class QAGuardianDbContext : DbContext
             e.Property(a => a.DecisionComment).HasMaxLength(2000);
             e.HasIndex(a => new { a.Status, a.ProjectId });
             e.HasIndex(a => new { a.TargetEntityId, a.Type, a.Status });
+        });
+
+        modelBuilder.Entity<ProjectMember>(e =>
+        {
+            e.ToTable("ProjectMembers");
+            // Sin FK navigations (mismo patrón que ApprovalRequest): evita acoplar seed/migración
+            // y permite filas de membresía mientras se crean proyectos.
+            e.HasIndex(m => new { m.ProjectId, m.UserId }).IsUnique();
+            e.HasIndex(m => m.UserId);
+        });
+
+        modelBuilder.Entity<ProjectDatabaseEnvironment>(e =>
+        {
+            e.ToTable("ProjectDatabaseEnvironments");
+            e.Property(x => x.Name).HasMaxLength(50).IsRequired();
+            e.Property(x => x.EncryptedConnectionString).IsRequired();
+            e.HasIndex(x => new { x.ProjectId, x.Name }).IsUnique();
+            e.HasIndex(x => x.ProjectId);
         });
     }
 

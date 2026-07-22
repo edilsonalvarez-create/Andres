@@ -45,14 +45,16 @@ public class CreateDefectCommandValidator : AbstractValidator<CreateDefectComman
 public class CreateDefectCommandHandler : IRequestHandler<CreateDefectCommand, Result<DefectDto>>
 {
     private readonly IDefectRepository _defects;
+    private readonly IProjectAccessService _access;
     private readonly ICurrentUserService _currentUser;
     private readonly INotificationDispatcher _notifications;
     private readonly IUnitOfWork _uow;
 
-    public CreateDefectCommandHandler(IDefectRepository defects, ICurrentUserService currentUser,
-        INotificationDispatcher notifications, IUnitOfWork uow)
+    public CreateDefectCommandHandler(IDefectRepository defects, IProjectAccessService access,
+        ICurrentUserService currentUser, INotificationDispatcher notifications, IUnitOfWork uow)
     {
         _defects = defects;
+        _access = access;
         _currentUser = currentUser;
         _notifications = notifications;
         _uow = uow;
@@ -60,6 +62,7 @@ public class CreateDefectCommandHandler : IRequestHandler<CreateDefectCommand, R
 
     public async Task<Result<DefectDto>> Handle(CreateDefectCommand request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var code = await _defects.NextCodeAsync(request.ProjectId, ct);
         var defect = new Defect(request.ProjectId, code, request.Title, request.Description,
             request.Severity, request.Priority, _currentUser.UserId ?? Guid.Empty,
@@ -86,18 +89,22 @@ public record ChangeDefectStatusCommand(Guid Id, DefectStatus TargetStatus, Guid
 public class ChangeDefectStatusCommandHandler : IRequestHandler<ChangeDefectStatusCommand, Result<DefectDto>>
 {
     private readonly IDefectRepository _defects;
+    private readonly IProjectAccessService _access;
     private readonly IUnitOfWork _uow;
 
-    public ChangeDefectStatusCommandHandler(IDefectRepository defects, IUnitOfWork uow)
+    public ChangeDefectStatusCommandHandler(
+        IDefectRepository defects, IProjectAccessService access, IUnitOfWork uow)
     {
         _defects = defects;
+        _access = access;
         _uow = uow;
     }
 
     public async Task<Result<DefectDto>> Handle(ChangeDefectStatusCommand request, CancellationToken ct)
     {
-        var defect = await _defects.GetByIdAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(Defect), request.Id);
+        var defect = await _defects.GetByIdAsync(request.Id, ct);
+        if (defect is null || !await _access.CanAccessProjectAsync(defect.ProjectId, ct))
+            throw new NotFoundException(nameof(Defect), request.Id);
 
         switch (request.TargetStatus)
         {
@@ -129,11 +136,17 @@ public record GetDefectsQuery(Guid ProjectId, int Page = 1, int PageSize = 20,
 public class GetDefectsQueryHandler : IRequestHandler<GetDefectsQuery, PagedResult<DefectDto>>
 {
     private readonly IDefectRepository _defects;
+    private readonly IProjectAccessService _access;
 
-    public GetDefectsQueryHandler(IDefectRepository defects) => _defects = defects;
+    public GetDefectsQueryHandler(IDefectRepository defects, IProjectAccessService access)
+    {
+        _defects = defects;
+        _access = access;
+    }
 
     public async Task<PagedResult<DefectDto>> Handle(GetDefectsQuery request, CancellationToken ct)
     {
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         var (items, total) = await _defects.PagedAsync(request.Page, request.PageSize,
             d => d.ProjectId == request.ProjectId && !d.IsDeleted
                 && (request.Status == null || d.Status == request.Status)

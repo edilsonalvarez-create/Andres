@@ -17,9 +17,11 @@ public class HangfireJobScheduler : IBackgroundJobScheduler
     public string EnqueueTestRunExecution(Guid testRunId)
         => _jobs.Enqueue<TestExecutionJob>(job => job.ExecuteAsync(testRunId, CancellationToken.None));
 
-    public string EnqueueDatabaseValidation(Guid validationRunId, string sourceConn, string targetConn)
+    public string EnqueueDatabaseValidation(
+        Guid validationRunId, Guid projectId, string sourceEnvironment, string targetEnvironment)
         => _jobs.Enqueue<TestExecutionJob>(job =>
-            job.ValidateDatabaseAsync(validationRunId, sourceConn, targetConn, CancellationToken.None));
+            job.ValidateDatabaseAsync(
+                validationRunId, projectId, sourceEnvironment, targetEnvironment, CancellationToken.None));
 }
 
 /// <summary>Job de Hangfire: delega en MediatR la ejecución del run o la validación de BD.</summary>
@@ -42,9 +44,14 @@ public class TestExecutionJob
     }
 
     [AutomaticRetry(Attempts = 1)]
-    public async Task ValidateDatabaseAsync(Guid validationRunId, string sourceConn, string targetConn, CancellationToken ct)
+    public async Task ValidateDatabaseAsync(
+        Guid validationRunId, Guid projectId, string sourceEnvironment, string targetEnvironment,
+        CancellationToken ct)
     {
-        _logger.LogInformation("Iniciando validación de base de datos {ValidationId}", validationRunId);
-        await _mediator.Send(new ExecuteDatabaseValidationCommand(validationRunId, sourceConn, targetConn), ct);
+        // Args Hangfire inspectables sin secretos: solo ids y nombres de entorno.
+        _logger.LogInformation(
+            "Iniciando validación de BD {ValidationId} proyecto {ProjectId} {Source}→{Target}",
+            validationRunId, projectId, sourceEnvironment, targetEnvironment);
+        await _mediator.Send(new ExecuteDatabaseValidationCommand(validationRunId), ct);
     }
 }

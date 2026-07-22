@@ -16,8 +16,8 @@
 | Documentación | ✅ | Manuales + Release Notes + Go Live Checklist |
 | Deployment | ✅ | Dockerfiles API/frontend + compose |
 | Docker | ✅ | Healthchecks SQL/Redis/API; frontend depende de API |
-| CI/CD | ✅ | `.github/workflows/ci.yml` → main **y** master; frontend tests |
-| Rollback | ✅ | Procedimiento en Go Live Checklist |
+| CI/CD | ✅ | `.github/workflows/ci.yml` → test → e2e smoke (Playwright) → docker → deploy (GHCR) |
+| Rollback | ✅ | Procedimiento en [DEPLOY-ROLLBACK.md](./DEPLOY-ROLLBACK.md) + Go Live Checklist |
 | Monitoreo | ✅ | Serilog + `/api/v1/version` |
 | Health Checks | ✅ | `/health`, `/health/live`, `/health/ready` (DB) |
 
@@ -28,7 +28,6 @@
 | Multi-tenant Organization | Alto esfuerzo; ACL por proyecto es siguiente iteración |
 | Redis health check dedicado | Ready actual cubre DB; Redis opcional en dev |
 | Entity-level audit diffs | Audit HTTP suficiente para RC |
-| E2E Playwright en CI | Smoke local/e2e existen; no bloquean RC |
 
 ## 3. Entry criteria met
 
@@ -47,7 +46,7 @@ Completar [GO-LIVE-CHECKLIST.md](./GO-LIVE-CHECKLIST.md) en staging con sign-off
 
 ```powershell
 dotnet test tests/QAGuardian.UnitTests -c Release
-cd frontend; npm test -- --run; npm run build
+cd frontend; npm run test:coverage; npm run build
 curl.exe -fsS http://localhost:5080/health/live
 curl.exe -fsS http://localhost:5080/health/ready
 curl.exe -fsS http://localhost:5080/api/v1/version

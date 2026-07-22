@@ -151,6 +151,7 @@ public enum RiskLevel
 public enum PipelineProvider
 {
     GitHubActions = 1,
+    /// <summary>Reservado — sin cliente ni endpoints. No shipped.</summary>
     AzureDevOps = 2
 }
 
@@ -199,4 +200,13 @@ public enum ApprovalStatus
     Pending = 1,
     Approved = 2,
     Rejected = 3
+}
+
+/// <summary>Rol de membresía dentro de un proyecto (TM-01 / Sprint 11). Independiente de <c>SystemRoles</c>.</summary>
+public enum RoleInProject
+{
+    /// <summary>Acceso de lectura/uso del proyecto (sujeto a policies globales).</summary>
+    Member = 1,
+    /// <summary>Puede gestionar membresía del proyecto.</summary>
+    ProjectAdmin = 2
 }

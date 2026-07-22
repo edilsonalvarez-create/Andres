@@ -42,15 +42,17 @@ public class CreateApprovalRequestCommandHandler
 {
     private readonly IRepository<ApprovalRequest> _approvals;
     private readonly IProjectRepository _projects;
+    private readonly IProjectAccessService _access;
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _uow;
 
     public CreateApprovalRequestCommandHandler(
         IRepository<ApprovalRequest> approvals, IProjectRepository projects,
-        ICurrentUserService currentUser, IUnitOfWork uow)
+        IProjectAccessService access, ICurrentUserService currentUser, IUnitOfWork uow)
     {
         _approvals = approvals;
         _projects = projects;
+        _access = access;
         _currentUser = currentUser;
         _uow = uow;
     }
@@ -61,6 +63,7 @@ public class CreateApprovalRequestCommandHandler
         if (_currentUser.UserId is null)
             return Result<ApprovalRequestDto>.Failure("Usuario no autenticado.");
 
+        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
         _ = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
 
@@ -88,16 +91,29 @@ public class GetPendingApprovalsQueryHandler
     : IRequestHandler<GetPendingApprovalsQuery, IReadOnlyList<ApprovalRequestDto>>
 {
     private readonly IRepository<ApprovalRequest> _approvals;
+    private readonly IProjectAccessService _access;
 
-    public GetPendingApprovalsQueryHandler(IRepository<ApprovalRequest> approvals)
-        => _approvals = approvals;
+    public GetPendingApprovalsQueryHandler(
+        IRepository<ApprovalRequest> approvals, IProjectAccessService access)
+    {
+        _approvals = approvals;
+        _access = access;
+    }
 
     public async Task<IReadOnlyList<ApprovalRequestDto>> Handle(
         GetPendingApprovalsQuery request, CancellationToken ct)
     {
+        if (request.ProjectId is Guid projectId)
+            await _access.EnsureCanAccessProjectAsync(projectId, ct);
+
+        var accessible = (await _access.ListAccessibleProjectIdsAsync(ct)).ToHashSet();
+        if (accessible.Count == 0)
+            return [];
+
         var items = await _approvals.ListAsync(a =>
             !a.IsDeleted
             && a.Status == ApprovalStatus.Pending
+            && accessible.Contains(a.ProjectId)
             && (request.ProjectId == null || a.ProjectId == request.ProjectId), ct);
         return items.OrderByDescending(a => a.CreatedAt).Select(a => a.ToDto()).ToList();
     }
@@ -120,6 +136,7 @@ public class DecideApprovalCommandHandler
     private readonly IRepository<ApprovalRequest> _approvals;
     private readonly ITestCaseRepository _testCases;
     private readonly IRepository<ProjectVersion> _versions;
+    private readonly IProjectAccessService _access;
     private readonly ICurrentUserService _currentUser;
     private readonly IUnitOfWork _uow;
 
@@ -127,12 +144,14 @@ public class DecideApprovalCommandHandler
         IRepository<ApprovalRequest> approvals,
         ITestCaseRepository testCases,
         IRepository<ProjectVersion> versions,
+        IProjectAccessService access,
         ICurrentUserService currentUser,
         IUnitOfWork uow)
     {
         _approvals = approvals;
         _testCases = testCases;
         _versions = versions;
+        _access = access;
         _currentUser = currentUser;
         _uow = uow;
     }
@@ -150,8 +169,9 @@ public class DecideApprovalCommandHandler
             return Result<ApprovalRequestDto>.Failure(
                 "Solo LiderTecnico, ProductOwner o Administrador pueden decidir aprobaciones.");
 
-        var approval = await _approvals.GetByIdAsync(request.Id, ct)
-            ?? throw new NotFoundException(nameof(ApprovalRequest), request.Id);
+        var approval = await _approvals.GetByIdAsync(request.Id, ct);
+        if (approval is null || !await _access.CanAccessProjectAsync(approval.ProjectId, ct))
+            throw new NotFoundException(nameof(ApprovalRequest), request.Id);
 
         if (request.Approve)
         {

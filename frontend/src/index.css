@@ -5,5 +5,41 @@
 body {
   margin: 0;
   font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background-color: #f4f6fb;
+  /* El color de fondo lo aplica MUI CssBaseline según el modo claro/oscuro activo
+     (ver theme/theme.ts) — no se hardcodea aquí para no romper el modo oscuro. */
+}
+
+/* WCAG 2.2 — 2.4.1 Bypass Blocks: enlace "saltar al contenido", oculto hasta recibir foco. */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 1rem;
+  z-index: 2000;
+  padding: 0.75rem 1.25rem;
+  background: #16213e;
+  color: #fff;
+  border-radius: 0 0 8px 8px;
+  text-decoration: none;
+  font-weight: 600;
+  transition: top 0.15s ease-in-out;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* WCAG 2.2 — 2.4.7 Focus Visible: anillo de foco consistente y de alto contraste. */
+:focus-visible {
+  outline: 3px solid #3f51b5;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* WCAG 2.2 — 2.3.3 Animation from Interactions: respeta la preferencia del sistema. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

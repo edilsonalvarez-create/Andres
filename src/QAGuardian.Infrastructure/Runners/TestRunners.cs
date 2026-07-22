@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Enums;
@@ -12,12 +11,17 @@ namespace QAGuardian.Infrastructure.Runners;
 /// </summary>
 public class PlaywrightTestRunner : ITestRunner
 {
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
     private readonly ILogger<PlaywrightTestRunner> _logger;
 
-    public PlaywrightTestRunner(ProcessExecutor executor, ILogger<PlaywrightTestRunner> logger)
+    public PlaywrightTestRunner(
+        ISandboxedProcessExecutor executor,
+        Microsoft.Extensions.Options.IOptions<RunnerSandboxOptions> options,
+        ILogger<PlaywrightTestRunner> logger)
     {
         _executor = executor;
+        _options = options.Value;
         _logger = logger;
     }
 
@@ -29,17 +33,24 @@ public class PlaywrightTestRunner : ITestRunner
             return new RunnerOutcome(true, [], [], null,
                 "No hay casos de prueba automatizados con Playwright para este proyecto.");
 
-        var reportPath = Path.Combine(context.WorkingDirectory, "playwright-report.json");
-        var specs = string.Join(' ', context.Scripts.Select(s => $"\"{s.ScriptPath}\""));
+        var reportFile = "playwright-report.json";
+        var reportPath = Path.Combine(context.WorkingDirectory, reportFile);
+        var sandbox = _executor.UsesContainerSandbox;
+        var specs = RunnerSandboxPaths.QuoteJoin(
+            context.Scripts.Select(s => s.ScriptPath), context.WorkingDirectory, sandbox);
+        var reportArg = sandbox ? reportFile : reportPath;
         var env = new Dictionary<string, string>
         {
-            ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = reportPath,
+            ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = reportArg,
             ["QA_GUARDIAN_ENV"] = context.Environment.ToString()
         };
 
-        var result = await _executor.RunAsync("npx",
+        var result = await _executor.RunAsync(new ScriptExecutionRequest(
+            context.TestRunId, "npx",
             $"playwright test {specs} --reporter=json",
-            context.WorkingDirectory, TimeSpan.FromMinutes(60), env, ct);
+            context.WorkingDirectory, TimeSpan.FromMinutes(60), env,
+            ["**/*.png", "**/*.webm", reportFile],
+            sandbox ? _options.SandboxImagePlaywright : null), ct);
 
         if (!File.Exists(reportPath))
         {
@@ -126,9 +137,16 @@ public class PlaywrightTestRunner : ITestRunner
 /// <summary>Runner de Postman: ejecuta collections con Newman y exporta JSON.</summary>
 public class NewmanTestRunner : ITestRunner
 {
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
 
-    public NewmanTestRunner(ProcessExecutor executor) => _executor = executor;
+    public NewmanTestRunner(
+        ISandboxedProcessExecutor executor,
+        Microsoft.Extensions.Options.IOptions<RunnerSandboxOptions> options)
+    {
+        _executor = executor;
+        _options = options.Value;
+    }
 
     public AutomationFramework Framework => AutomationFramework.Postman;
 
@@ -141,14 +159,45 @@ public class NewmanTestRunner : ITestRunner
         var results = new List<RunnerResultItem>();
         foreach (var script in context.Scripts)
         {
-            var exportPath = Path.Combine(context.WorkingDirectory,
-                $"newman-{Guid.NewGuid():N}.json");
-            var envArg = context.Parameters.TryGetValue("postmanEnvironment", out var envFile)
-                ? $" -e \"{envFile}\"" : string.Empty;
+            var exportFileName = $"newman-{Guid.NewGuid():N}.json";
+            var exportPath = Path.Combine(context.WorkingDirectory, exportFileName);
+            var sandbox = _executor.UsesContainerSandbox;
+            var scriptArg = sandbox
+                ? RunnerSandboxPaths.ToWorkspaceRelative(script.ScriptPath, context.WorkingDirectory)
+                : script.ScriptPath;
+            var exportArg = sandbox ? exportFileName : exportPath;
 
-            var run = await _executor.RunAsync("npx",
-                $"newman run \"{script.ScriptPath}\"{envArg} -r json --reporter-json-export \"{exportPath}\"",
-                context.WorkingDirectory, TimeSpan.FromMinutes(30), null, ct);
+            var envArg = context.Parameters.TryGetValue("postmanEnvironment", out var envFile)
+                ? $" -e \"{(sandbox ? RunnerSandboxPaths.ToWorkspaceRelative(envFile, context.WorkingDirectory) : envFile)}\""
+                : string.Empty;
+
+            string fileName;
+            string arguments;
+            if (sandbox)
+            {
+                fileName = "newman";
+                arguments =
+                    $"run \"{scriptArg}\"{envArg} -r json --reporter-json-export \"{exportArg}\"";
+            }
+            else
+            {
+                fileName = "npx";
+                arguments =
+                    $"newman run \"{script.ScriptPath}\"{envArg} -r json --reporter-json-export \"{exportPath}\"";
+            }
+
+            var run = await _executor.RunAsync(new ScriptExecutionRequest(
+                context.TestRunId,
+                fileName,
+                arguments,
+                context.WorkingDirectory,
+                TimeSpan.FromMinutes(30),
+                new Dictionary<string, string>
+                {
+                    ["QA_GUARDIAN_ENV"] = context.Environment.ToString()
+                },
+                [exportFileName, "newman-*.json"],
+                sandbox ? _options.SandboxImage : null), ct);
 
             if (!File.Exists(exportPath))
             {
@@ -211,9 +260,16 @@ public class NewmanTestRunner : ITestRunner
 /// <summary>Runner de JMeter: ejecuta planes .jmx en modo no-GUI y agrega métricas de rendimiento.</summary>
 public class JMeterTestRunner : ITestRunner
 {
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
 
-    public JMeterTestRunner(ProcessExecutor executor) => _executor = executor;
+    public JMeterTestRunner(
+        ISandboxedProcessExecutor executor,
+        Microsoft.Extensions.Options.IOptions<RunnerSandboxOptions> options)
+    {
+        _executor = executor;
+        _options = options.Value;
+    }
 
     public AutomationFramework Framework => AutomationFramework.JMeter;
 
@@ -228,10 +284,19 @@ public class JMeterTestRunner : ITestRunner
 
         foreach (var script in context.Scripts)
         {
-            var jtlPath = Path.Combine(context.WorkingDirectory, $"jmeter-{Guid.NewGuid():N}.jtl");
-            var run = await _executor.RunAsync("jmeter",
-                $"-n -t \"{script.ScriptPath}\" -l \"{jtlPath}\" -Jjmeter.save.saveservice.output_format=csv",
-                context.WorkingDirectory, TimeSpan.FromMinutes(90), null, ct);
+            var jtlFile = $"jmeter-{Guid.NewGuid():N}.jtl";
+            var jtlPath = Path.Combine(context.WorkingDirectory, jtlFile);
+            var sandbox = _executor.UsesContainerSandbox;
+            var planArg = sandbox
+                ? RunnerSandboxPaths.ToWorkspaceRelative(script.ScriptPath, context.WorkingDirectory)
+                : script.ScriptPath;
+            var jtlArg = sandbox ? jtlFile : jtlPath;
+
+            var run = await _executor.RunAsync(new ScriptExecutionRequest(
+                context.TestRunId, "jmeter",
+                $"-n -t \"{planArg}\" -l \"{jtlArg}\" -Jjmeter.save.saveservice.output_format=csv",
+                context.WorkingDirectory, TimeSpan.FromMinutes(90), null, [jtlFile],
+                sandbox ? _options.SandboxImageJMeter : null), ct);
 
             if (!File.Exists(jtlPath))
             {
@@ -345,9 +410,9 @@ public class JMeterTestRunner : ITestRunner
 /// <summary>Runner de OWASP ZAP: escaneo baseline vía Docker y parseo de alertas.</summary>
 public class ZapScanRunner : ITestRunner
 {
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
 
-    public ZapScanRunner(ProcessExecutor executor) => _executor = executor;
+    public ZapScanRunner(ISandboxedProcessExecutor executor) => _executor = executor;
 
     public AutomationFramework Framework => AutomationFramework.OwaspZap;
 
@@ -363,10 +428,13 @@ public class ZapScanRunner : ITestRunner
                 "No se configuró la URL objetivo del escaneo de seguridad.");
 
         var reportName = $"zap-{Guid.NewGuid():N}.json";
-        var run = await _executor.RunAsync("docker",
+        // PreferHostDockerCli: ZAP ya aísla en su imagen oficial; no anidar sandbox Newman/Playwright.
+        var run = await _executor.RunAsync(new ScriptExecutionRequest(
+            context.TestRunId, "docker",
             $"run --rm -v \"{context.WorkingDirectory}:/zap/wrk\" ghcr.io/zaproxy/zaproxy:stable " +
             $"zap-baseline.py -t \"{targetUrl}\" -J {reportName} -I",
-            context.WorkingDirectory, TimeSpan.FromMinutes(45), null, ct);
+            context.WorkingDirectory, TimeSpan.FromMinutes(45), null, [reportName],
+            PreferHostDockerCli: true), ct);
 
         var reportPath = Path.Combine(context.WorkingDirectory, reportName);
         if (!File.Exists(reportPath))
@@ -440,21 +508,25 @@ public class ZapScanRunner : ITestRunner
 }
 
 /// <summary>Resuelve el runner adecuado por framework o tipo de prueba.</summary>
+/// <summary>
+/// Resuelve el runner por framework indexando <see cref="ITestRunner.Framework"/> de las
+/// instancias registradas en DI. Antes del Sprint 4 este resolvía con un <c>switch</c> +
+/// <see cref="IServiceProvider"/> (localizador de servicios) que exigía editar esta clase cada
+/// vez que se agregaba un runner nuevo — violación de OCP documentada en ADR-009. Ahora un
+/// runner nuevo solo necesita implementar <see cref="ITestRunner"/> y registrarse como tal en
+/// <c>DependencyInjection.cs</c>; esta clase no cambia.
+/// </summary>
 public class TestRunnerFactory : ITestRunnerFactory
 {
-    private readonly IServiceProvider _services;
+    private readonly Dictionary<AutomationFramework, ITestRunner> _runnersByFramework;
 
-    public TestRunnerFactory(IServiceProvider services) => _services = services;
+    public TestRunnerFactory(IEnumerable<ITestRunner> runners)
+        => _runnersByFramework = runners.ToDictionary(r => r.Framework);
 
-    public ITestRunner Resolve(AutomationFramework framework) => framework switch
-    {
-        AutomationFramework.Playwright => _services.GetRequiredService<PlaywrightTestRunner>(),
-        AutomationFramework.Postman => _services.GetRequiredService<NewmanTestRunner>(),
-        AutomationFramework.JMeter => _services.GetRequiredService<JMeterTestRunner>(),
-        AutomationFramework.OwaspZap => _services.GetRequiredService<ZapScanRunner>(),
-        AutomationFramework.VisualRegression => _services.GetRequiredService<VisualRegressionRunner>(),
-        _ => throw new NotSupportedException($"Framework no soportado: {framework}")
-    };
+    public ITestRunner Resolve(AutomationFramework framework)
+        => _runnersByFramework.TryGetValue(framework, out var runner)
+            ? runner
+            : throw new NotSupportedException($"Framework no soportado: {framework}");
 
     public ITestRunner ResolveByTestType(TestType testType) => testType switch
     {

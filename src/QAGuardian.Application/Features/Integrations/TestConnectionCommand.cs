@@ -1,3 +1,4 @@
+using FluentValidation;
 using MediatR;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Application.Common.Models;
@@ -13,6 +14,22 @@ public sealed record TestIntegrationConnectionCommand(
     string? Token,
     string? ExtraJson
 ) : IRequest<Result<string>>;
+
+public sealed class TestIntegrationConnectionCommandValidator
+    : AbstractValidator<TestIntegrationConnectionCommand>
+{
+    public TestIntegrationConnectionCommandValidator(ISsrfGuard ssrf)
+    {
+        RuleFor(x => x.Type).IsInEnum();
+        When(x => x.Type is IntegrationType.SonarQube or IntegrationType.OwaspZap, () =>
+            RuleFor(x => x.BaseUrl).Custom((url, ctx) =>
+            {
+                var check = ssrf.ValidateOutboundUri(url);
+                if (!check.IsSuccess)
+                    ctx.AddFailure(check.Error ?? "La URL base fue rechazada por política SSRF.");
+            }));
+    }
+}
 
 public sealed class TestIntegrationConnectionCommandHandler(IIntegrationConnectionTester tester)
     : IRequestHandler<TestIntegrationConnectionCommand, Result<string>>

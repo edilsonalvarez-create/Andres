@@ -18,7 +18,9 @@ public class AiAnalysis : BaseEntity
         DefectPriority suggestedPriority,
         decimal estimatedHours,
         string suggestedOwnerRole,
-        string modelUsed)
+        string modelUsed,
+        double? confidence = null,
+        string? evidenceQuote = null)
     {
         if (testResultId is null && defectId is null)
             throw new DomainException("El análisis debe asociarse a un resultado de prueba o a un defecto.");
@@ -32,6 +34,8 @@ public class AiAnalysis : BaseEntity
         EstimatedHours = estimatedHours;
         SuggestedOwnerRole = suggestedOwnerRole;
         ModelUsed = modelUsed;
+        Confidence = confidence;
+        EvidenceQuote = evidenceQuote;
         CreatedAt = DateTime.UtcNow;
     }
 
@@ -45,5 +49,9 @@ public class AiAnalysis : BaseEntity
     public decimal EstimatedHours { get; private set; }
     public string SuggestedOwnerRole { get; private set; } = default!;
     public string ModelUsed { get; private set; } = default!;
+    /// <summary>Confianza del diagnóstico (0–1). Null en registros previos a Sprint 14.</summary>
+    public double? Confidence { get; private set; }
+    /// <summary>Cita de evidencia usada para grounding. Null si no hubo o registro legacy.</summary>
+    public string? EvidenceQuote { get; private set; }
     public DateTime CreatedAt { get; private set; }
 }

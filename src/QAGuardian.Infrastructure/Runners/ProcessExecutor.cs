@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Extensions.Logging;
 
@@ -24,7 +25,7 @@ public class ProcessExecutor
         var effectiveTimeout = timeout ?? TimeSpan.FromMinutes(30);
         var psi = new ProcessStartInfo
         {
-            FileName = fileName,
+            FileName = ResolveExecutable(fileName),
             Arguments = arguments,
             WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
             RedirectStandardOutput = true,
@@ -36,7 +37,7 @@ public class ProcessExecutor
             foreach (var (key, value) in environment)
                 psi.Environment[key] = value;
 
-        _logger.LogInformation("Ejecutando: {FileName} {Arguments}", fileName, arguments);
+        _logger.LogInformation("Ejecutando: {FileName} {Arguments}", psi.FileName, arguments);
 
         using var process = new Process { StartInfo = psi };
         var stdout = new StringBuilder();
@@ -61,5 +62,37 @@ public class ProcessExecutor
             _logger.LogWarning("Proceso {FileName} excedió el timeout de {Timeout}", fileName, effectiveTimeout);
             return new ProcessResult(-1, stdout.ToString(), stderr.ToString(), true);
         }
+    }
+
+    /// <summary>
+    /// Resuelve el ejecutable a una ruta completa. En Windows, herramientas como npx/newman/jmeter
+    /// son shims .cmd/.bat; con UseShellExecute=false, Process.Start no aplica PATHEXT, así que
+    /// hay que localizar la extensión correcta a lo largo del PATH. En caso de no encontrarlo,
+    /// se devuelve el nombre original para conservar el comportamiento y el mensaje de error nativo.
+    /// </summary>
+    private static string ResolveExecutable(string fileName)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return fileName;
+
+        // Ya trae ruta o extensión ejecutable: se usa tal cual.
+        if (Path.IsPathRooted(fileName) || Path.HasExtension(fileName))
+            return fileName;
+
+        var pathExt = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var dir in pathDirs)
+        {
+            foreach (var ext in pathExt)
+            {
+                var candidate = Path.Combine(dir, fileName + ext);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+        return fileName;
     }
 }

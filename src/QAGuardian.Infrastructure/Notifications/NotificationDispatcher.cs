@@ -20,14 +20,20 @@ public class NotificationDispatcher : INotificationDispatcher
 {
     private readonly QAGuardianDbContext _context;
     private readonly IHttpClientFactory _httpFactory;
+    private readonly ISsrfGuard _ssrf;
     private readonly IConfiguration _configuration;
     private readonly ILogger<NotificationDispatcher> _logger;
 
-    public NotificationDispatcher(QAGuardianDbContext context, IHttpClientFactory httpFactory,
-        IConfiguration configuration, ILogger<NotificationDispatcher> logger)
+    public NotificationDispatcher(
+        QAGuardianDbContext context,
+        IHttpClientFactory httpFactory,
+        ISsrfGuard ssrf,
+        IConfiguration configuration,
+        ILogger<NotificationDispatcher> logger)
     {
         _context = context;
         _httpFactory = httpFactory;
+        _ssrf = ssrf;
         _configuration = configuration;
         _logger = logger;
     }
@@ -127,9 +133,16 @@ public class NotificationDispatcher : INotificationDispatcher
 
     private async Task PostJsonAsync(string url, object payload, CancellationToken ct)
     {
+        var safety = _ssrf.ValidateOutboundUri(url);
+        if (!safety.IsSuccess)
+        {
+            _logger.LogWarning("Webhook bloqueado por SSRF: {Url} — {Reason}", url, safety.Error);
+            return;
+        }
+
         var client = _httpFactory.CreateClient("notifications");
         using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var response = await client.PostAsync(url, content, ct);
+        using var response = await client.PostAsync(safety.Value!.ToString(), content, ct);
         if (!response.IsSuccessStatusCode)
             _logger.LogWarning("Webhook {Url} respondió {Status}", url, response.StatusCode);
     }

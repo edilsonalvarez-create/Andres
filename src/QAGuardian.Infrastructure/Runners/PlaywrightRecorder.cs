@@ -1,36 +1,44 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using QAGuardian.Application.Abstractions.Services;
 
 namespace QAGuardian.Infrastructure.Runners;
 
 /// <summary>
-/// Graba specs de Playwright con <c>npx playwright codegen</c> (sesión interactiva en
-/// instalaciones locales con entorno gráfico). Si la grabación no produce una spec
-/// (servidor headless o sesión cancelada), devuelve un andamiaje inicial para la URL.
+/// Graba specs de Playwright con <c>npx playwright codegen</c> vía sandbox.
+/// En headless/sandbox suele fallar (requiere entorno gráfico) y se usa andamiaje.
 /// </summary>
 public class PlaywrightRecorder : IPlaywrightRecorder
 {
-    private readonly ProcessExecutor _executor;
+    private readonly ISandboxedProcessExecutor _executor;
+    private readonly RunnerSandboxOptions _options;
     private readonly ILogger<PlaywrightRecorder> _logger;
 
-    public PlaywrightRecorder(ProcessExecutor executor, ILogger<PlaywrightRecorder> logger)
+    public PlaywrightRecorder(
+        ISandboxedProcessExecutor executor,
+        IOptions<RunnerSandboxOptions> options,
+        ILogger<PlaywrightRecorder> logger)
     {
         _executor = executor;
+        _options = options.Value;
         _logger = logger;
     }
 
     public async Task<RecordedScript> RecordAsync(string url, string workingDirectory, CancellationToken ct = default)
     {
         Directory.CreateDirectory(workingDirectory);
-        var outputPath = Path.Combine(workingDirectory, $"codegen-{Guid.NewGuid():N}.spec.ts");
+        var outputFile = $"codegen-{Guid.NewGuid():N}.spec.ts";
+        var outputPath = Path.Combine(workingDirectory, outputFile);
+        var sandbox = _executor.UsesContainerSandbox;
+        var outArg = sandbox ? outputFile : outputPath;
 
         try
         {
-            // codegen abre un navegador; la spec se escribe al cerrarlo. Timeout amplio para
-            // dar tiempo a grabar. En un servidor sin entorno gráfico falla y se usa el andamiaje.
-            var run = await _executor.RunAsync("npx",
-                $"playwright codegen --target=playwright-test -o \"{outputPath}\" \"{url}\"",
-                workingDirectory, TimeSpan.FromMinutes(10), null, ct);
+            var run = await _executor.RunAsync(new ScriptExecutionRequest(
+                Guid.Empty, "npx",
+                $"playwright codegen --target=playwright-test -o \"{outArg}\" \"{url}\"",
+                workingDirectory, TimeSpan.FromMinutes(10), null, [outputFile],
+                sandbox ? _options.SandboxImagePlaywright : null), ct);
 
             if (File.Exists(outputPath))
             {

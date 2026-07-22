@@ -1,13 +1,31 @@
 import { useEffect, useState } from "react";
 import {
-  Alert, Box, Button, Card, CardContent, Chip, CircularProgress, Grid2 as Grid,
-  Link, Table, TableBody, TableCell, TableHead, TableRow, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, CircularProgress, FormControl, Grid2 as Grid,
+  InputLabel, Link, MenuItem, Select, Table, TableBody, TableCell, TableHead, TableRow,
+  TextField, Typography,
 } from "@mui/material";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import SettingsIcon from "@mui/icons-material/Settings";
+import StorageIcon from "@mui/icons-material/Storage";
 import { api } from "../api/client";
 import ProjectSelect from "../components/ProjectSelect";
 import IntegrationConfigDialog from "../components/IntegrationConfigDialog";
+
+interface DbEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  isActive: boolean;
+}
+
+interface DbValidationRun {
+  id: string;
+  sourceEnvironment: string;
+  targetEnvironment: string;
+  status: string;
+  differencesCount: number;
+  startedAt: string;
+}
 
 interface SonarMetrics {
   projectKey: string;
@@ -39,10 +57,19 @@ export default function IntegrationsPage() {
   const [analyzing, setAnalyzing] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [dbEnvs, setDbEnvs] = useState<DbEnvironment[]>([]);
+  const [dbRuns, setDbRuns] = useState<DbValidationRun[]>([]);
+  const [sourceEnv, setSourceEnv] = useState("");
+  const [targetEnv, setTargetEnv] = useState("");
+  const [dbStarting, setDbStarting] = useState(false);
+  const [newEnvName, setNewEnvName] = useState("");
+  const [newEnvConn, setNewEnvConn] = useState("");
+  const [savingEnv, setSavingEnv] = useState(false);
 
   const loadIntegrationData = () => {
     if (!projectId) return;
     setSonar(null); setSonarMissing(false); setPulls(null); setPullsError(false);
+    setDbEnvs([]); setDbRuns([]); setSourceEnv(""); setTargetEnv("");
 
     api.get<SonarMetrics>(`/integrations/sonarqube/${projectId}`)
       .then((r) => setSonar(r.data))
@@ -50,9 +77,57 @@ export default function IntegrationsPage() {
     api.get<PullRequest[]>(`/integrations/github/${projectId}/pulls`)
       .then((r) => setPulls(r.data))
       .catch(() => setPullsError(true));
+    api.get<DbEnvironment[]>(`/integrations/database-environments/${projectId}`)
+      .then((r) => setDbEnvs(r.data))
+      .catch(() => setDbEnvs([]));
+    api.get<DbValidationRun[]>(`/integrations/database-validation/${projectId}`)
+      .then((r) => setDbRuns(r.data.slice(0, 5)))
+      .catch(() => setDbRuns([]));
   };
 
   useEffect(loadIntegrationData, [projectId]);
+
+  const startDbValidation = async () => {
+    if (!projectId || !sourceEnv || !targetEnv) return;
+    setDbStarting(true);
+    setMessage(null);
+    try {
+      await api.post("/integrations/database-validation", {
+        projectId,
+        sourceEnvironment: sourceEnv,
+        targetEnvironment: targetEnv,
+      });
+      setMessage(`Validación de esquema encolada: ${sourceEnv} → ${targetEnv}.`);
+      const { data } = await api.get<DbValidationRun[]>(`/integrations/database-validation/${projectId}`);
+      setDbRuns(data.slice(0, 5));
+    } catch {
+      setMessage("No se pudo iniciar la validación. Verifique pertenencia al proyecto y entornos configurados.");
+    } finally {
+      setDbStarting(false);
+    }
+  };
+
+  const saveDbEnvironment = async () => {
+    if (!projectId || !newEnvName.trim() || !newEnvConn.trim()) return;
+    setSavingEnv(true);
+    setMessage(null);
+    try {
+      await api.post("/integrations/database-environments", {
+        projectId,
+        name: newEnvName.trim(),
+        connectionString: newEnvConn.trim(),
+      });
+      setMessage(`Entorno '${newEnvName.trim()}' guardado (connection string cifrada en servidor).`);
+      setNewEnvName("");
+      setNewEnvConn("");
+      const { data } = await api.get<DbEnvironment[]>(`/integrations/database-environments/${projectId}`);
+      setDbEnvs(data);
+    } catch {
+      setMessage("No se pudo guardar el entorno de BD.");
+    } finally {
+      setSavingEnv(false);
+    }
+  };
 
   const analyzePr = async (prNumber: number) => {
     setAnalyzing(prNumber);
@@ -177,6 +252,116 @@ export default function IntegrationsPage() {
                 </Grid>
               ))}
             </Grid>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent>
+          <Box className="flex items-center gap-2 mb-3">
+            <StorageIcon fontSize="small" color="primary" />
+            <Typography variant="subtitle1" fontWeight={600}>
+              Validación de esquema SQL (entornos nombrados)
+            </Typography>
+          </Box>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Las connection strings no se envían desde el navegador al validar. Configure entornos
+            (dev, staging, …) en el servidor; la API solo acepta nombres.
+          </Alert>
+          {!projectId && (
+            <Typography variant="body2" color="text.secondary">Seleccione un proyecto.</Typography>
+          )}
+          {projectId && (
+            <>
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    size="small" fullWidth label="Nombre entorno" placeholder="dev"
+                    value={newEnvName} onChange={(e) => setNewEnvName(e.target.value)}
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    size="small" fullWidth type="password" label="Connection string (solo al configurar)"
+                    value={newEnvConn} onChange={(e) => setNewEnvConn(e.target.value)}
+                    helperText="Se cifra en el servidor; no se reutiliza en el POST de validación."
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 2 }} className="flex items-center">
+                  <Button
+                    fullWidth variant="outlined" size="small"
+                    disabled={savingEnv || !newEnvName.trim() || !newEnvConn.trim()}
+                    onClick={() => void saveDbEnvironment()}
+                  >
+                    {savingEnv ? <CircularProgress size={16} /> : "Guardar"}
+                  </Button>
+                </Grid>
+              </Grid>
+              <Grid container spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel>Origen</InputLabel>
+                    <Select
+                      label="Origen" value={sourceEnv}
+                      onChange={(e) => setSourceEnv(e.target.value)}
+                    >
+                      {dbEnvs.map((e) => (
+                        <MenuItem key={e.id} value={e.name}>{e.name}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel>Destino</InputLabel>
+                    <Select
+                      label="Destino" value={targetEnv}
+                      onChange={(e) => setTargetEnv(e.target.value)}
+                    >
+                      {dbEnvs.map((e) => (
+                        <MenuItem key={e.id} value={e.name}>{e.name}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <Button
+                    variant="contained" size="small" fullWidth
+                    disabled={dbStarting || !sourceEnv || !targetEnv || sourceEnv === targetEnv}
+                    onClick={() => void startDbValidation()}
+                  >
+                    {dbStarting ? <CircularProgress size={16} color="inherit" /> : "Comparar esquemas"}
+                  </Button>
+                </Grid>
+              </Grid>
+              {dbEnvs.length === 0 && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  No hay entornos configurados. Guarde al menos dos (ej. dev y staging).
+                </Alert>
+              )}
+              {dbRuns.length > 0 && (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Origen → Destino</TableCell>
+                      <TableCell>Estado</TableCell>
+                      <TableCell>Diffs</TableCell>
+                      <TableCell>Inicio</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {dbRuns.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell>{r.sourceEnvironment} → {r.targetEnvironment}</TableCell>
+                        <TableCell>{r.status}</TableCell>
+                        <TableCell>{r.differencesCount}</TableCell>
+                        <TableCell>{new Date(r.startedAt).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

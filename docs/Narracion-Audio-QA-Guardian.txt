@@ -1,0 +1,37 @@
+QA GUARDIAN — NARRACIÓN PARA AUDIO / VOZ EN OFF
+Tutorial: "Cómo un QA usa la plataforma"  ·  Duración estimada ~10 min
+Instrucciones: lee este texto de corrido (o pégalo en un motor de texto-a-voz).
+Los títulos entre corchetes son marcas de sección; no se leen.
+
+[Apertura]
+Bienvenido a QA Guardian, la plataforma que centraliza toda la calidad de tus proyectos en un solo lugar. Con ella, como analista de QA, puedes ejecutar pruebas funcionales, de regresión, de APIs, de rendimiento, de seguridad, detectar cambios visuales y validar bases de datos… y, sobre todo, decidir automáticamente si un despliegue se aprueba o se rechaza. En este video verás el flujo completo de trabajo del día a día.
+
+[Iniciar sesión]
+Lo primero es iniciar sesión con tu cuenta corporativa. Cada usuario tiene un rol —por ejemplo, Administrador o Analista— que define qué puede hacer: ejecutar pruebas, gestionar proyectos o solo ver reportes. Ingresa tus credenciales y entra al panel principal.
+
+[Elegir el proyecto]
+Arriba a la derecha eliges el proyecto con el que vas a trabajar; en este ejemplo, "BD-cero-cero-uno, Base de datos". Todo lo que hagas —casos, ejecuciones, integraciones y el Quality Gate— queda asociado a ese proyecto.
+
+[Crear un caso de prueba]
+Vamos a crear un caso de prueba. En "Casos de prueba", pulsa "Nuevo caso". Le das un código, un título claro, eliges el tipo —Funcional, API, Rendimiento, etcétera— y la prioridad. Luego defines los pasos: para cada uno, la acción que se ejecuta y el resultado esperado. Estos pasos son la documentación viva del caso. Guarda, y el caso queda listo para automatizarse o ejecutarse.
+
+[Automatizar el caso]
+Un caso puede ser manual o automatizado. Al automatizarlo eliges el motor según el tipo de prueba: Playwright para funcionales y regresión, Postman para APIs, JMeter para rendimiento, OWASP ZAP para seguridad y Regresión Visual para cambios de interfaz. El contenido del script puede escribirse dentro de la plataforma, o apuntar a un archivo externo —por ejemplo un plan de JMeter— o a una URL objetivo, como en las pruebas visuales. Si el script es un archivo externo o una URL, el editor te lo indica con una observación, para que sepas dónde vive y cómo editarlo.
+
+[Ejecutar una prueba]
+Ahora ejecutamos. En "Ejecuciones de prueba", pulsa "Nueva ejecución". Eliges el tipo de prueba y el ambiente —por ejemplo QA— y la plataforma la lanza en segundo plano. Verás el estado actualizarse en tiempo real: primero "Pendiente", luego "En curso" y finalmente "Completada" o "Fallida". No necesitas refrescar: la plataforma te avisa sola.
+
+[Leer los resultados y la evidencia]
+Cada ejecución muestra en la lista los totales: cuántas pruebas corrieron, cuántas pasaron, cuántas fallaron y el porcentaje de éxito. Al abrir el detalle ves cada resultado con sus métricas y su evidencia automática: capturas de pantalla, el reporte de las pruebas de API, el archivo de resultados en las de rendimiento, o la imagen de diferencias en las visuales. Y con un clic descargas el reporte consolidado en PDF o Word para adjuntarlo a tu documentación o compartirlo con el equipo.
+
+[El Quality Gate]
+Aquí está el corazón de la plataforma: el Quality Gate. Según reglas configurables —como un mínimo de porcentaje de éxito o cero vulnerabilidades críticas— la plataforma evalúa cada ejecución y emite un veredicto: aprobado o rechazado. Si el gate pasa, el despliegue se aprueba; si no, se bloquea automáticamente. Así, ningún cambio llega a producción sin evidencia de calidad. Ten en cuenta: una ejecución que se cae por un error de entorno no obtiene veredicto, porque nunca llegó a evaluarse.
+
+[Casos especiales: visual, seguridad y base de datos]
+Tres tipos de prueba muy útiles para el QA. En regresión visual, la primera ejecución crea una imagen de referencia —el baseline— y las siguientes la comparan pixel a pixel: si algo cambia por encima del umbral, falla y te muestra la imagen de diferencias. En seguridad, el escaneo OWASP ZAP revisa la aplicación y lista los hallazgos por nivel de riesgo; el gate rechaza si hay vulnerabilidades altas o críticas. En validación de base de datos, la plataforma compara dos esquemas —origen y destino— y te muestra las diferencias en tablas, columnas, índices, llaves foráneas y hasta el conteo de registros.
+
+[Integraciones: GitHub, SonarQube y CI/CD]
+QA Guardian se conecta con tu ecosistema. Con GitHub, al ejecutar sobre un Pull Request publica el veredicto del Quality Gate como un check y un comentario con la tabla de resultados: el equipo ve al instante si el cambio está aprobado o bloqueado. Con SonarQube, trae las métricas de calidad del código —bugs, code smells, cobertura, vulnerabilidades— y su propio quality gate, todo en la misma vista. Y con un clic genera el pipeline de integración continua —por ejemplo de GitHub Actions— que dispara las pruebas y detiene el despliegue si el gate no pasa. QA Guardian se convierte en el Quality Gate de toda tu automatización.
+
+[Cierre]
+Recapitulando, el flujo diario del QA en la plataforma es: crear el caso, automatizarlo, ejecutarlo, revisar resultados y evidencia, y dejar que el Quality Gate apruebe o rechace el despliegue —con todo integrado a GitHub, SonarQube y tu integración continua. Menos trabajo manual, evidencia automática y decisiones de calidad objetivas. Eso es QA Guardian. ¡Gracias por acompañarnos!

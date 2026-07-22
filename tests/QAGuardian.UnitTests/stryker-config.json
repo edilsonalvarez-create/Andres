@@ -1,0 +1,13 @@
+{
+  "_comment": "Mutation testing acotado a las máquinas de estado del dominio (bien cubiertas). Ejecutar: cd tests/QAGuardian.UnitTests && dotnet stryker. Para ampliar, agregar globs a 'mutate'.",
+  "stryker-config": {
+    "project": "QAGuardian.Domain.csproj",
+    "mutate": [
+      "**/Entities/Defect.cs",
+      "**/Entities/QualityGate.cs",
+      "**/Entities/QualityGateCondition.cs"
+    ],
+    "reporters": ["html", "progress", "json"],
+    "thresholds": { "high": 80, "low": 60, "break": 50 }
+  }
+}

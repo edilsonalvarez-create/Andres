@@ -10,8 +10,9 @@ y bloquea el merge/despliegue cuando la calidad no cumple el umbral.
 - **Backend**: .NET 9, ASP.NET Core, Clean Architecture + DDD + CQRS (MediatR), EF Core
   (SQL Server / SQLite), Redis, Hangfire, SignalR, Serilog.
 - **Frontend**: React 18 + TypeScript + Material UI + Tailwind (Vite).
-- **Integraciones**: Playwright, Postman/Newman, JMeter, OWASP ZAP, SonarQube, GitHub,
-  GitHub Actions, Azure DevOps, SQL Server.
+- **Integraciones (implementadas)**: Playwright, Postman/Newman, JMeter, OWASP ZAP,
+  SonarQube, GitHub (PRs / checks / Actions YAML), SQL Server (validación BD).
+- **No implementado** (no shipped): Azure DevOps, Jira, Xray, qTest, TestRail.
 - **IA**: agente de diagnóstico/generación (Anthropic, default `claude-sonnet-4-5`)
   con caché por fingerprint, confidence y degradación heurística sin API key.
 - **Release:** `1.0.0-rc.1` — ver [Release Notes](docs/Release/RELEASE-NOTES-1.0.0-rc.1.md)

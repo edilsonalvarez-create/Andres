@@ -1,0 +1,53 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Restaurar paquetes (.NET)",
+      "type": "shell",
+      "command": "dotnet restore QAGuardian.sln",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compilar solución (.NET)",
+      "type": "shell",
+      "command": "dotnet build QAGuardian.sln",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Instalar dependencias (frontend)",
+      "type": "shell",
+      "command": "npm install",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Ejecutar API (.NET)",
+      "type": "shell",
+      "command": "dotnet run --project src/QAGuardian.API",
+      "isBackground": true,
+      "options": { "env": { "ASPNETCORE_ENVIRONMENT": "Development", "ASPNETCORE_URLS": "http://localhost:5080" } },
+      "problemMatcher": {
+        "pattern": { "regexp": "^\\s*$" },
+        "background": { "activeOnStart": true, "beginsPattern": ".", "endsPattern": "Now listening on|Application started" }
+      }
+    },
+    {
+      "label": "Ejecutar Frontend (Vite)",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": { "cwd": "${workspaceFolder}/frontend" },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "^\\s*$" },
+        "background": { "activeOnStart": true, "beginsPattern": ".", "endsPattern": "ready in|Local:" }
+      }
+    },
+    {
+      "label": "Ejecutar App (API + Frontend)",
+      "dependsOn": ["Ejecutar API (.NET)", "Ejecutar Frontend (Vite)"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

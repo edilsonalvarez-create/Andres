@@ -19,33 +19,33 @@ public class QualityGatesController : ApiControllerBase
     public async Task<IActionResult> GetById(Guid id, CancellationToken ct)
         => Ok(await Mediator.Send(new GetQualityGateDetailQuery(id), ct));
 
-    /// <summary>Crea un quality gate con sus condiciones.</summary>
+    /// <summary>Crea un quality gate con sus condiciones (B6: solo Administrador).</summary>
     [HttpPost]
-    [Authorize(Policy = Policies.ManageProjects)]
+    [Authorize(Policy = Policies.Administer)]
     public async Task<IActionResult> Create([FromBody] CreateQualityGateCommand command, CancellationToken ct)
         => FromResult(await Mediator.Send(command, ct));
 
-    /// <summary>Actualiza un quality gate existente.</summary>
+    /// <summary>Actualiza un quality gate existente (B6: solo Administrador).</summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Policy = Policies.ManageProjects)]
+    [Authorize(Policy = Policies.Administer)]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateQualityGateCommand command, CancellationToken ct)
         => FromResult(await Mediator.Send(command with { Id = id }, ct));
 
-    /// <summary>Elimina un quality gate (soft delete).</summary>
+    /// <summary>Elimina un quality gate (soft delete) (B6: solo Administrador).</summary>
     [HttpDelete("{id:guid}")]
-    [Authorize(Policy = Policies.ManageProjects)]
+    [Authorize(Policy = Policies.Administer)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
         => FromResult(await Mediator.Send(new DeleteQualityGateCommand(id), ct));
 
-    /// <summary>Asigna un quality gate a un proyecto.</summary>
+    /// <summary>Asigna un quality gate a un proyecto (B6: ProjectAdmin del proyecto).</summary>
     [HttpPost("assign")]
     [Authorize(Policy = Policies.ManageProjects)]
     public async Task<IActionResult> Assign([FromBody] AssignGateToProjectCommand command, CancellationToken ct)
         => FromResult(await Mediator.Send(command, ct));
 
-    /// <summary>Obtiene el historial de auditoría de cambios en un quality gate.</summary>
+    /// <summary>Historial de auditoría de un quality gate (B6: solo Administrador).</summary>
     [HttpGet("{id:guid}/audit-log")]
-    [Authorize(Policy = Policies.ManageProjects)]
+    [Authorize(Policy = Policies.Administer)]
     public async Task<IActionResult> GetAuditLog(Guid id, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
         => Ok(await Mediator.Send(new GetQualityGateAuditLogQuery(id, page, pageSize), ct));
 }

@@ -2,12 +2,14 @@ using QAGuardian.Application.Abstractions.Persistence;
 using QAGuardian.Application.Abstractions.Services;
 using QAGuardian.Domain.Common;
 using QAGuardian.Domain.Entities;
+using QAGuardian.Domain.Enums;
 
 namespace QAGuardian.Infrastructure.Identity;
 
 /// <summary>
 /// Enforcement ACL por proyecto. Admin global bypass; resto requiere ProjectMember activo.
 /// Sin acceso → NotFoundException (anti-enum), nunca revela existencia del recurso ajeno.
+/// B6 / ADR-013: <see cref="EnsureCanAdministerProjectAsync"/> exige ProjectAdmin.
 /// </summary>
 public sealed class ProjectAccessService : IProjectAccessService
 {
@@ -28,6 +30,8 @@ public sealed class ProjectAccessService : IProjectAccessService
         _testRuns = testRuns;
     }
 
+    public bool IsGlobalAdministrator() => IsGlobalAdmin();
+
     public async Task<bool> CanAccessProjectAsync(Guid projectId, CancellationToken ct = default)
     {
         if (projectId == Guid.Empty)
@@ -47,6 +51,27 @@ public sealed class ProjectAccessService : IProjectAccessService
     public async Task EnsureCanAccessProjectAsync(Guid projectId, CancellationToken ct = default)
     {
         if (!await CanAccessProjectAsync(projectId, ct))
+            throw new NotFoundException(nameof(Project), projectId);
+    }
+
+    public async Task EnsureCanAdministerProjectAsync(Guid projectId, CancellationToken ct = default)
+    {
+        if (projectId == Guid.Empty
+            || !await _projects.AnyAsync(p => p.Id == projectId && !p.IsDeleted, ct))
+            throw new NotFoundException(nameof(Project), projectId);
+
+        if (IsGlobalAdmin())
+            return;
+
+        var userId = _currentUser.UserId;
+        if (userId is null)
+            throw new NotFoundException(nameof(Project), projectId);
+
+        var memberships = await _members.ListByUserAsync(userId.Value, ct);
+        var membership = memberships.FirstOrDefault(m =>
+            m.ProjectId == projectId && m.IsActive && m.RoleInProject == RoleInProject.ProjectAdmin);
+
+        if (membership is null)
             throw new NotFoundException(nameof(Project), projectId);
     }
 

@@ -98,7 +98,7 @@ public class AssignGateToProjectCommandHandler : IRequestHandler<AssignGateToPro
 
     public async Task<Result<bool>> Handle(AssignGateToProjectCommand request, CancellationToken ct)
     {
-        await _access.EnsureCanAccessProjectAsync(request.ProjectId, ct);
+        await _access.EnsureCanAdministerProjectAsync(request.ProjectId, ct);
         var project = await _projects.GetByIdAsync(request.ProjectId, ct)
             ?? throw new NotFoundException(nameof(Project), request.ProjectId);
         _ = await _gates.GetByIdAsync(request.QualityGateId, ct)

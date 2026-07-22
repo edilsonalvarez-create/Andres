@@ -173,7 +173,11 @@ public static class DependencyInjection
         services.AddScoped<IReportGenerator, RunReportGenerator>();
 
         // ── Trabajos en segundo plano (Hangfire) ─────────────────────
+        // Sprint 20-A (B5): PrepareSchemaIfNecessary=false en prod (default).
+        // El esquema HangFire lo aplica db-init (05-hangfire-schema.sql) con sa/DBA
+        // antes del API; el app user least-privilege no tiene DDL.
         var useInMemoryJobs = configuration.GetValue("Hangfire:UseInMemory", false) || useSqlite;
+        var prepareHangfireSchema = ResolveHangfirePrepareSchemaIfNecessary(configuration);
         services.AddHangfire(config =>
         {
             config.SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -184,7 +188,7 @@ public static class DependencyInjection
             else
                 config.UseSqlServerStorage(connectionString, new SqlServerStorageOptions
                 {
-                    PrepareSchemaIfNecessary = true,
+                    PrepareSchemaIfNecessary = prepareHangfireSchema,
                     QueuePollInterval = TimeSpan.FromSeconds(5)
                 });
         });
@@ -193,4 +197,13 @@ public static class DependencyInjection
 
         return services;
     }
+
+    /// <summary>
+    /// Resuelve <c>Hangfire:PrepareSchemaIfNecessary</c>.
+    /// Default <c>false</c> (producción / least-privilege): el esquema debe existir
+    /// vía <c>database/05-hangfire-schema.sql</c>. Development puede poner <c>true</c>
+    /// en appsettings para SQL Server local sin fricción.
+    /// </summary>
+    internal static bool ResolveHangfirePrepareSchemaIfNecessary(IConfiguration configuration)
+        => configuration.GetValue("Hangfire:PrepareSchemaIfNecessary", defaultValue: false);
 }

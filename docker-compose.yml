@@ -50,8 +50,11 @@ services:
           --startup-project src/QAGuardian.API/QAGuardian.API.csproj \
           --connection "$${ConnectionStrings__DefaultConnection}"
 
-  # Sprint 16-B: crea el login/usuario de mínimo privilegio (database/00-app-user.sql).
-  # Usa `sa` solo aquí (bootstrap puntual); el API nunca se conecta con `sa`.
+  # Sprint 16-B + 20-A (B5): bootstrap privilegiado (sa) ANTES del API:
+  #   1) esquema Hangfire (05-hangfire-schema.sql — Install.sql Hangfire.SqlServer 1.8.18)
+  #   2) login/usuario least-privilege (00-app-user.sql)
+  #   3) grants DML Hangfire (00-app-user-hangfire.sql)
+  # El API nunca se conecta con `sa` y lleva Hangfire:PrepareSchemaIfNecessary=false.
   db-init:
     image: mcr.microsoft.com/mssql/server:2022-latest
     working_dir: /scripts
@@ -69,10 +72,20 @@ services:
     command:
       - |
         set -euo pipefail
-        /opt/mssql-tools18/bin/sqlcmd -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
-          -v AppLogin="$$APP_DB_USER" AppPassword="$$APP_DB_PASSWORD" \
+        set +H
+        # -b: abortar el servicio si algún lote SQL falla (p. ej. Hangfire a medias).
+        # set +H: evita que '!' en contraseñas dispare history expansion de bash.
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v HangFireSchema="HangFire" \
+          -i 05-hangfire-schema.sql
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v AppLogin="$$APP_DB_USER" \
+          -v AppPassword="$$APP_DB_PASSWORD" \
           -i 00-app-user.sql
-
+        /opt/mssql-tools18/bin/sqlcmd -b -S sqlserver,1433 -U sa -P "$$SQL_SA_PASSWORD" -C \
+          -v AppLogin="$$APP_DB_USER" \
+          -v HangFireSchema="HangFire" \
+          -i 00-app-user-hangfire.sql
 
   # Sprint 17-A (B1): proxy con allowlist delante del daemon Docker. El API ya NO
   # monta /var/run/docker.sock; lanza los sandboxes efímeros SOLO a través de este
@@ -135,6 +148,8 @@ services:
       # sobre el entorno heredado; no lo resetea), así que no requiere cambios de código.
       DOCKER_HOST: "tcp://docker-socket-proxy:2375"
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-QA}
+      # Sprint 20-A (B5): Hangfire no hace DDL; esquema vía db-init (05-hangfire-schema.sql).
+      Hangfire__PrepareSchemaIfNecessary: "false"
       # Sprint 16-B: usuario de mínimo privilegio (sin DDL) — NO `sa`.
       ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=QAGuardian;User Id=${APP_DB_USER:-qaguardian_app};Password=${APP_DB_PASSWORD};TrustServerCertificate=True"
       ConnectionStrings__Redis: "redis:6379"

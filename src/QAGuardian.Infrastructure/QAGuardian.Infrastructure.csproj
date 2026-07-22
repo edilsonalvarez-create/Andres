@@ -22,4 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\QAGuardian.Application\QAGuardian.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="QAGuardian.UnitTests" />
+  </ItemGroup>
 </Project>

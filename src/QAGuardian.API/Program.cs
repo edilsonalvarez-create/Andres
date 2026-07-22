@@ -56,6 +56,23 @@ builder.Services.Configure<GzipCompressionProviderOptions>(o => o.Level = Compre
 // (aprovisionado) y sus roles RBAC se toman de la base local.
 var jwtKey = builder.Configuration["Jwt:SigningKey"]
     ?? throw new InvalidOperationException("Jwt:SigningKey es obligatoria.");
+if (string.IsNullOrWhiteSpace(jwtKey) || jwtKey.Length < 32)
+    throw new InvalidOperationException(
+        "Jwt:SigningKey es obligatoria y debe tener al menos 32 caracteres.");
+
+// B7: fail-fast de Security:EncryptionKey (también en Development; fuera de Development
+// es obligatorio para no arrancar con SHA256("") / clave corta).
+var encryptionKey = builder.Configuration["Security:EncryptionKey"];
+if (string.IsNullOrWhiteSpace(encryptionKey)
+    || encryptionKey.Length < QAGuardian.Infrastructure.Identity.AesTokenEncryptionService.MinEncryptionKeyChars)
+{
+    throw new InvalidOperationException(
+        "Security:EncryptionKey es obligatoria y debe tener al menos " +
+        $"{QAGuardian.Infrastructure.Identity.AesTokenEncryptionService.MinEncryptionKeyChars} caracteres " +
+        "(user-secrets, Security__EncryptionKey o secret manager). " +
+        "No se admite vacía ni corta: el cifrado de tokens de integraciones quedaría inseguro.");
+}
+
 var localIssuer = builder.Configuration["Jwt:Issuer"] ?? "QAGuardian";
 var oidcAuthority = builder.Configuration["Oidc:Authority"];
 var oidcEnabled = !string.IsNullOrWhiteSpace(oidcAuthority);

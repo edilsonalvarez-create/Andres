@@ -72,7 +72,7 @@ base `docker-compose.yml` (usado en producción/CI, ver §4) no publica esos pue
 | Hangfire (solo admins) | http://localhost:5080/hangfire |
 | SQL Server | localhost,1433 (solo con `docker-compose.override.yml`, dev) |
 | `migrate` (one-shot) | aplica EF antes del API; sin puerto |
-| `db-init` (one-shot) | crea el usuario de mínimo privilegio (`database/00-app-user.sql`); sin puerto |
+| `db-init` (one-shot) | esquema Hangfire + usuario mínimo privilegio + grants Hangfire; sin puerto |
 | SonarQube (perfil `tools`) | http://localhost:9000 |
 | OWASP ZAP (perfil `tools`) | http://localhost:8090 |
 
@@ -129,25 +129,47 @@ GID del grupo `docker` del host (`getent group docker | cut -d: -f3` en Linux).
    - Nuevas migraciones (desarrollo):
      `dotnet ef migrations add <Nombre> --project src/QAGuardian.Infrastructure --startup-project src/QAGuardian.API`.
 
-1.b **SQL least-privilege (el proceso API nunca usa `sa`)**: tras aplicar el esquema,
-   ejecute `database/00-app-user.sql` con una cuenta sysadmin para crear un login de
-   aplicación con solo `db_datareader` + `db_datawriter` (sin DDL: la migración la aplica
-   una cuenta separada, nunca el API):
+1.b **Esquema Hangfire fuera del runtime (Sprint 20-A / B5)**: con
+   `Hangfire:PrepareSchemaIfNecessary=false` (default en Production/QA/Staging y en
+   `appsettings.json`), el API **no** crea tablas Hangfire. Aplíquelas con cuenta
+   privilegiada **antes** de arrancar la API (tras migrate):
+
+   ```bash
+   sqlcmd -S <server> -U sa -P "<sa-password>" -C \
+     -v HangFireSchema="HangFire" \
+     -i database/05-hangfire-schema.sql
+   ```
+
+   El script es el `Install.sql` oficial de Hangfire.SqlServer **1.8.18** (schema v9),
+   idempotente. Sin este paso, el arranque con SQL Server storage falla de forma
+   explícita (Hangfire no encuentra `[HangFire].[Schema]` / tablas).
+
+1.c **SQL least-privilege (el proceso API nunca usa `sa`)**: tras el esquema EF y Hangfire,
+   cree el login de aplicación (`db_datareader` + `db_datawriter`, sin DDL) y otorgue
+   DML explícito sobre el esquema HangFire:
 
    ```bash
    sqlcmd -S <server> -U sa -P "<sa-password>" -C \
      -v AppLogin="qaguardian_app" AppPassword="<contraseña-única>" \
      -i database/00-app-user.sql
+   sqlcmd -S <server> -U sa -P "<sa-password>" -C \
+     -v AppLogin="qaguardian_app" HangFireSchema="HangFire" \
+     -i database/00-app-user-hangfire.sql
    ```
 
    Configure `ConnectionStrings__DefaultConnection` de la API con ese usuario (no `sa`).
-   Con Docker Compose, el servicio `db-init` automatiza este paso usando
-   `APP_DB_USER`/`APP_DB_PASSWORD` de `.env`.
+   Variables típicas: `APP_DB_USER` / `APP_DB_PASSWORD` (Compose) o
+   `ConnectionStrings__DefaultConnection` en el host. En Production/QA/Staging el
+   placeholder versionado usa `User Id=qaguardian_app` — la contraseña va solo por
+   secreto/env. Development sigue en SQLite + Hangfire en memoria (`UseInMemory=true`).
+
+   Con Docker Compose, `db-init` automatiza 1.b + 1.c en orden:
+   `05-hangfire-schema.sql` → `00-app-user.sql` → `00-app-user-hangfire.sql`.
 
 2. **Secretos**: configure por variables de entorno o archivos secretos montados
    (`--env-file`, secret manager, Docker/Kubernetes secrets — nunca en appsettings ni
    hardcodeados en la imagen):
-   - `ConnectionStrings__DefaultConnection` (usuario de mínimo privilegio, ver 1.b),
+   - `ConnectionStrings__DefaultConnection` (usuario de mínimo privilegio, ver 1.c),
      `ConnectionStrings__Redis`
    - `Jwt__SigningKey` (aleatoria, mínimo 32 caracteres)
    - `Security__EncryptionKey` (cifra los tokens de integraciones en reposo)
@@ -188,6 +210,7 @@ debe completarse y evaluar el quality gate por defecto.
 |---|---|---|
 | 500 al arrancar: `Jwt:SigningKey` | Falta la clave | Defina `Jwt__SigningKey` |
 | Ejecuciones quedan "Pendiente" | Hangfire sin storage | Verifique conexión SQL o `Hangfire__UseInMemory=true` |
+| API no arranca / Hangfire: falta esquema | No se ejecutó `05-hangfire-schema.sql` y `PrepareSchemaIfNecessary=false` | Corra `db-init` (o el sqlcmd de §4.1.b) con sa/DBA antes del API |
 | ZAP no genera reporte | Sin acceso a Docker | Monte el socket Docker o use ZAP remoto |
 | Notificaciones no llegan | Canal sin suscripción al evento | Revise flags `events` del canal |
 | IA responde "heuristic-fallback" | Sin `Anthropic__ApiKey` | Configure la API key |

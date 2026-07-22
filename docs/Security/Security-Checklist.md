@@ -136,6 +136,14 @@ secretos, o superficie de red.
       destinos; imagen API aún instala Node/Playwright (legado); escape del daemon Docker =
       compromiso del host. Mitigación futura: Docker remoto autenticado / gVisor / sin sock.
 
+## Sprint 20 — B5 (Hangfire schema off-runtime)
+
+- [x] **B5 — Hangfire sin DDL en runtime:** `Hangfire:PrepareSchemaIfNecessary` default
+      `false`; esquema vía `database/05-hangfire-schema.sql` + grants
+      `00-app-user-hangfire.sql`; `db-init` en compose aplica el orden hangfire → app-user →
+      grants. Development puede `PrepareSchemaIfNecessary=true` (o `UseInMemory=true`).
+      Tests: `HangfirePrepareSchemaTests`.
+
 ---
 
 ## Checklist de PR (a aplicar en cada revisión de código)

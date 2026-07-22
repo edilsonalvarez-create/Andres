@@ -92,13 +92,24 @@ public class AesTokenEncryptionService : ITokenEncryptionService
 {
     private const int NonceSizeBytes = 12; // 96 bits, tamaño recomendado por NIST SP 800-38D
     private const int TagSizeBytes = 16;   // 128 bits
+    /// <summary>Material mínimo antes de derivar con SHA-256 (OWASP A02:2025 / B7).</summary>
+    public const int MinEncryptionKeyChars = 32;
 
     private readonly byte[] _key;
 
     public AesTokenEncryptionService(IConfiguration configuration)
     {
-        var keyMaterial = configuration["Security:EncryptionKey"]
-            ?? throw new InvalidOperationException("Security:EncryptionKey no está configurada.");
+        var keyMaterial = configuration["Security:EncryptionKey"];
+        if (string.IsNullOrWhiteSpace(keyMaterial))
+            throw new InvalidOperationException(
+                "Security:EncryptionKey no está configurada. Defina una clave de al menos " +
+                $"{MinEncryptionKeyChars} caracteres (user-secrets, variable de entorno " +
+                "Security__EncryptionKey o secret manager). Una clave vacía produciría material " +
+                "determinista (SHA256(\"\")) e inseguro.");
+        if (keyMaterial.Length < MinEncryptionKeyChars)
+            throw new InvalidOperationException(
+                $"Security:EncryptionKey es demasiado corta ({keyMaterial.Length} caracteres). " +
+                $"Se requieren al menos {MinEncryptionKeyChars} caracteres de material aleatorio.");
         _key = SHA256.HashData(Encoding.UTF8.GetBytes(keyMaterial));
     }
 

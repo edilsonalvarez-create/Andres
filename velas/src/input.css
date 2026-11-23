@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@source "../index.html";
+@source "../assets/app.js";
+
+@theme {
+  --font-display: "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+
+  --color-crema: #faf6ee;
+  --color-arena: #efe6d4;
+  --color-salvia: #5f7a5c;
+  --color-bosque: #2f4a35;
+  --color-oro: #c08a2e;
+  --color-oro-claro: #e9c77b;
+  --color-carbon: #2a2622;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-crema text-carbon font-sans antialiased;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-oro;
+  }
+}
+
+@layer components {
+  .btn-primario {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-bosque px-6 py-3 text-sm font-medium text-crema transition hover:bg-salvia;
+  }
+  .btn-secundario {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-bosque px-6 py-3 text-sm font-medium text-bosque transition hover:bg-bosque hover:text-crema;
+  }
+  .titulo-seccion {
+    @apply font-display text-4xl font-semibold text-bosque md:text-5xl;
+  }
+  .llama {
+    animation: titilar 2.4s ease-in-out infinite;
+    transform-origin: 50% 100%;
+  }
+}
+
+@keyframes titilar {
+  0%, 100% { transform: scale(1) rotate(-1deg); }
+  50% { transform: scale(1.06, 0.95) rotate(1.5deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .llama { animation: none; }
+  html { scroll-behavior: auto; }
+}

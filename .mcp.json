@@ -5,14 +5,14 @@
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp@latest"],
       "env": {
-        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}"
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-proxy-injected}"
       }
     },
     "21st": {
       "type": "http",
       "url": "https://21st.dev/api/mcp",
       "headers": {
-        "x-api-key": "${API_KEY_21ST:-}"
+        "x-api-key": "${API_KEY_21ST:-proxy-injected}"
       }
     }
   }
